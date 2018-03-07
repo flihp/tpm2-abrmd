@@ -29,6 +29,7 @@ TESTS_UNIT = \
     test/handle-map_unit \
     test/ipc-frontend_unit \
     test/ipc-frontend-dbus_unit \
+    test/ipc-frontend-tls_unit \
     test/random_unit \
     test/session-entry_unit \
     test/test-skeleton_unit \
@@ -39,6 +40,7 @@ TESTS_UNIT = \
     test/tpm2-command_unit \
     test/tpm2-response_unit \
     test/tss2-tcti-tabrmd_unit \
+    test/tss2-tcti-tabrmd-tls_unit \
     test/tss2-tcti-echo_unit \
     test/util_unit
 
@@ -92,11 +94,12 @@ check_PROGRAMS  = $(sbin_PROGRAMS) $(TESTS)
 
 # libraries
 libtss2_tcti_tabrmd = src/libtss2-tcti-tabrmd.la
+libtss2_tcti_tabrmd_tls = src/libtss2-tcti-tabrmd-tls.la
 libtss2_tcti_echo = src/libtss2-tcti-echo.la
 libtest        = test/integration/libtest.la
 libutil        = src/libutil.la
 
-lib_LTLIBRARIES = $(libtss2_tcti_tabrmd)
+lib_LTLIBRARIES = $(libtss2_tcti_tabrmd) $(libtss2_tcti_tabrmd_tls)
 noinst_LTLIBRARIES = \
     $(libtss2_tcti_echo) \
     $(libtest) \
@@ -105,8 +108,9 @@ man3_MANS = man/man3/Tss2_Tcti_Tabrmd_Init.3
 man7_MANS = man/man7/tss2-tcti-tabrmd.7
 man8_MANS = man/man8/tpm2-abrmd.8
 
-libtss2_tcti_tabrmddir      = $(includedir)/tcti
-libtss2_tcti_tabrmd_HEADERS = $(srcdir)/src/include/tss2-tcti-tabrmd.h
+libtss2_tctidir      = $(includedir)/tcti
+libtss2_tcti_HEADERS = $(srcdir)/src/include/tss2-tcti-tabrmd.h \
+    $(srcdir)/src/include/tcti-tabrmd-tls.h
 
 EXTRA_DIST = \
     src/tabrmd.xml \
@@ -120,6 +124,7 @@ EXTRA_DIST = \
     dist/tpm2-abrmd.conf \
     dist/tpm2-abrmd.preset.in \
     dist/tss2-tcti-tabrmd.pc.in \
+    dist/tss2-tcti-tabrmd-tls.pc.in \
     dist/tpm2-abrmd.service.in \
     dist/com.intel.tss2.Tabrmd.service \
     scripts/int-test-funcs.sh \
@@ -151,7 +156,7 @@ CLEANFILES = \
 BUILT_SOURCES = src/tabrmd-generated.h src/tabrmd-generated.c
 
 pkgconfigdir     = $(libdir)/pkgconfig
-pkgconfig_DATA   = dist/tss2-tcti-tabrmd.pc
+pkgconfig_DATA   = dist/tss2-tcti-tabrmd.pc dist/tss2-tcti-tabrmd-tls.pc
 dbuspolicy_DATA  = dist/tpm2-abrmd.conf
 if HAVE_SYSTEMD
 systemdpreset_DATA = dist/tpm2-abrmd.preset
@@ -167,6 +172,7 @@ VALGRIND_memcheck_FLAGS = --leak-check=full --show-leak-kinds=definite,indirect 
 
 # This is a hack required to ensure that BUILT_SOURCES are generated before
 # the file that requires them.
+src/tcti-tabrmd.c : $(BUILT_SOURCES)
 src/ipc-frontend-dbus.c : $(BUILT_SOURCES)
 
 # utility library with most of the code that makes up the daemon
@@ -195,6 +201,8 @@ src_libutil_la_SOURCES = \
     src/ipc-frontend.h \
     src/ipc-frontend-dbus.h \
     src/ipc-frontend-dbus.c \
+    src/ipc-frontend-tls.h \
+    src/ipc-frontend-tls.c \
     src/logging.c \
     src/logging.h \
     src/message-queue.c \
@@ -247,9 +255,20 @@ test_integration_libtest_la_SOURCES = \
     test/integration/test-options.h
 
 src_libtss2_tcti_tabrmd_la_LIBADD   = $(DBUS_LIBS) $(GIO_LIBS) $(GLIB_LIBS) \
-    $(PTHREAD_LIBS) $(noinst_LTLIBRARIES) $(TSS2_SYS_LIBS)
+    $(PTHREAD_LIBS) $(libutil) $(TSS2_SYS_LIBS)
 src_libtss2_tcti_tabrmd_la_LDFLAGS = -fPIC -Wl,--no-undefined -Wl,--version-script=$(srcdir)/src/tcti-tabrmd.map
-src_libtss2_tcti_tabrmd_la_SOURCES = src/tcti-tabrmd.c src/tcti-tabrmd-priv.h $(srcdir)/src/tcti-tabrmd.map
+src_libtss2_tcti_tabrmd_la_SOURCES = \
+    src/tcti-tabrmd.c \
+    src/tcti-tabrmd-priv.h \
+    $(srcdir)/src/tcti-tabrmd.map
+
+src_libtss2_tcti_tabrmd_tls_la_LIBADD = $(GIO_LIBS) $(GLIB_LIBS) \
+    $(libutil)
+src_libtss2_tcti_tabrmd_tls_la_LDFLAGS = -fPIC -Wl,--no-undefined -Wl,--version-script=$(srcdir)/src/tcti-tabrmd-tls.map
+src_libtss2_tcti_tabrmd_tls_la_SOURCES = \
+    src/tcti-tabrmd-tls.c \
+    src/tcti-tabrmd-tls-priv.h \
+    $(srcdir)/src/tcti-tabrmd-tls.map
 
 src_libtss2_tcti_echo_la_LIBADD  = $(DBUS_LIBS) $(GLIB_LIBS)
 src_libtss2_tcti_echo_la_SOURCES = \
@@ -314,7 +333,7 @@ test_test_skeleton_unit_SOURCES = test/test-skeleton_unit.c
 
 test_response_sink_unit_CFLAGS  = $(UNIT_AM_CFLAGS)
 test_response_sink_unit_LDADD   = $(CMOCKA_LIBS) $(GLIB_LIBS) $(TSS2_SYS_LIBS) \
-    $(PTHREAD_LIBS) $(noinst_LTLIBRARIES) $(GOBJECT_LIBS)
+    $(PTHREAD_LIBS) $(libutil) $(GOBJECT_LIBS)
 test_response_sink_unit_SOURCES = \
     src/connection.c \
     src/control-message.c \
@@ -360,6 +379,10 @@ test_ipc_frontend_unit_SOURCES = test/ipc-frontend_unit.c
 test_ipc_frontend_dbus_unit_CFLAGS  = $(UNIT_AM_CFLAGS)
 test_ipc_frontend_dbus_unit_LDADD   = $(CMOCKA_LIBS) $(GLIB_LIBS) $(GOBJECT_LIBS) $(libutil)
 test_ipc_frontend_dbus_unit_SOURCES = test/ipc-frontend-dbus_unit.c
+
+test_ipc_frontend_tls_unit_CFLAGS  = $(UNIT_AM_CFLAGS)
+test_ipc_frontend_tls_unit_LDADD   = $(CMOCKA_LIBS) $(GLIB_LIBS) $(GOBJECT_LIBS) $(libutil)
+test_ipc_frontend_tls_unit_SOURCES = test/ipc-frontend-tls_unit.c
 
 test_logging_unit_CFLAGS  = $(UNIT_AM_CFLAGS)
 test_logging_unit_LDADD   = $(CMOCKA_LIBS) $(GLIB_LIBS) $(GOBJECT_LIBS) $(libutil)
@@ -425,12 +448,17 @@ test_tss2_tcti_tabrmd_unit_LDFLAGS = -Wl,--wrap=g_dbus_proxy_call_with_unix_fd_l
 test_tss2_tcti_tabrmd_unit_LDADD   = $(CMOCKA_LIBS) $(GIO_LIBS) $(libutil)
 test_tss2_tcti_tabrmd_unit_SOURCES = src/tcti-tabrmd.c test/tss2-tcti-tabrmd_unit.c
 
+test_tss2_tcti_tabrmd_tls_unit_CFLAGS  = $(UNIT_AM_CFLAGS)
+test_tss2_tcti_tabrmd_tls_unit_LDFLAGS = -Wl,--wrap=g_str_hash,--wrap=read_data,--wrap=poll
+test_tss2_tcti_tabrmd_tls_unit_LDADD   = $(CMOCKA_LIBS) $(GIO_LIBS) $(libutil)
+test_tss2_tcti_tabrmd_tls_unit_SOURCES = src/tcti-tabrmd-tls.c test/tss2-tcti-tabrmd-tls_unit.c
+
 test_tss2_tcti_echo_unit_CFLAGS  = $(UNIT_AM_CFLAGS)
 test_tss2_tcti_echo_unit_LDADD   = $(CMOCKA_LIBS) $(libtss2_tcti_echo)
 test_tss2_tcti_echo_unit_SOURCES = test/tss2-tcti-echo_unit.c
 endif
 
-TEST_INT_LIBS = $(libtest) $(libutil) $(libtss2_tcti_tabrmd) $(GLIB_LIBS)
+TEST_INT_LIBS = $(noinst_LTLIBRARIES) $(lib_LTLIBRARIES) $(GLIB_LIBS)
 test_integration_auth_session_max_int_LDADD = $(TEST_INT_LIBS)
 test_integration_auth_session_max_int_SOURCES = test/integration/main.c \
     test/integration/auth-session-max.int.c

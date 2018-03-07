@@ -1,0 +1,7 @@
+{
+    global:
+        tss2_tcti_tabrmd_tls_init;
+        Tss2_Tcti_Info;
+    local:
+        *;
+};

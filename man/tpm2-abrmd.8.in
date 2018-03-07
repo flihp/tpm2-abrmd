@@ -6,7 +6,7 @@
 tpm2-abrmd \- TPM2 access broker and resource management daemon
 .SH SYNOPSIS
 .B tpm2-abrmd
-.RB [\-m][\-e][\-i][\-o][\-l\ logger-name][\-r][\-s][\-g\ /dev/urandom][\-t\ conf]
+.RB [\-m][\-e][\-i ipc-name][\-o][\-l\ logger-name][\-r][\-s][\-g\ /dev/urandom][\-t\ conf]
 .SH DESCRIPTION
 .B tpm2-abrmd
 is a daemon that implements the TPM access broker and resource manager as
@@ -75,6 +75,11 @@ Read seed for pseudo-random number generator from the provided file.
 \fB\-s,\ \-\-session\fR
 Connect daemon to the session dbus. This option overrides the default
 behavior.
+.TP
+\fB\-i,\ \-\-ipc-mode\fR
+Use this option to select the IPC mechanism used by the daemon to communicate
+with clients. The currently supported values are 'dbus' (the default) and
+\'tls'.
 .TP
 \fB\-v,\ \-\-version\fR
 Display version string.
