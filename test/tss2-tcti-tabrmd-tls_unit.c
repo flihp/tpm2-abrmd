@@ -345,6 +345,10 @@ tcti_tabrmd_tls_transmit_success_test (void **state)
 
     rc = Tss2_Tcti_Transmit (data->context, size, command_in);
     assert_int_equal (rc, TSS2_RC_SUCCESS);
+    while (data->server == NULL) {
+        g_warning ("%s: this is a race condition", __func__);
+        sleep (1);
+    }
     istream = g_io_stream_get_input_stream (data->server);
     ret = g_input_stream_read (istream, command_out, size, NULL, &error);
     assert_int_equal (ret, size);
