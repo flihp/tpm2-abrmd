@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, Intel Corporation
+ * Copyright (c) 2017 - 2018, Intel Corporation
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -31,15 +31,11 @@
 extern "C" {
 #endif
 
-#include <stdbool.h>
 #include <tss2/tss2_tcti.h>
 
-TSS2_RC tss2_tcti_tabrmd_tls_init (TSS2_TCTI_CONTEXT       *context,
+TSS2_RC Tss2_Tcti_Tabrmd_Tls_Init (TSS2_TCTI_CONTEXT       *context,
                                    size_t                  *size,
-                                   const char              *ip_addr,
-                                   unsigned int             port,
-                                   const char              *cert_file,
-                                   bool                     tls_enabled);
+                                   const char              *conf);
 
 #ifdef __cplusplus
 }

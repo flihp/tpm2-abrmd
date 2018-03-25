@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, Intel Corporation
+ * Copyright (c) 2017 - 2018, Intel Corporation
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -47,6 +47,146 @@
 #define IPC_SERVER_SOCKET_PORT_MT 44334
 
 /*
+ * When passed a value beyond UINT16_MAX the string_to_port function returns
+ * 0 indicating an invalid port number (TCP ports are between 1 and
+ * UINT16_MAX.
+ */
+static void
+string_to_port_invalid_test (void **state)
+{
+    char port_str [6] = { 0 };
+    uint16_t port;
+
+    snprintf (port_str, 6, "%" PRIu32, UINT16_MAX + 1);
+    port = string_to_port (port_str);
+    assert_int_equal (port, 0);
+}
+/*
+ * When passed a string containing the digits for a value between 1 and
+ * UINT16_MAX the `string_to_port` function returns the uint16_t
+ * representation.
+ */
+static void
+string_to_port_valid_test (void **state)
+{
+    char port_str [6] = { 0 };
+    uint16_t port;
+
+    snprintf (port_str, 6, "%" PRIu16, UINT16_MAX - 1);
+    port = string_to_port (port_str);
+    assert_int_equal (port, UINT16_MAX - 1);
+}
+/*
+ * When passed a URL without a port component the `parse_conf_str` function
+ * will extract the host name component and return this in the `hostname`
+ * parameter. The port will remain unchanged by the function.
+ */
+static void
+parse_conf_str_hostname_test (void **state)
+{
+    TSS2_RC rc;
+    tabrmd_tls_conf_t conf = { 0 };
+    char conf_str [] = "host=foo";
+
+    rc = parse_key_value_string (conf_str, tabrmd_tls_kv_callback, &conf);
+    assert_int_equal (rc, TSS2_RC_SUCCESS);
+    assert_string_equal (conf.hostname, "foo");
+}
+/*
+ * When passed a URL with a hostname followed by a colon and port number then
+ * the `parse_conf_str` function will return an RC indicating success and the
+ * host name copied to the `hostname` buffer and the port transformed into a
+ * uint16_t.
+ */
+static void
+parse_conf_str_port_test (void **state)
+{
+    TSS2_RC rc;
+    tabrmd_tls_conf_t conf = { 0 };
+    char conf_str [] = "port=53432";
+
+    rc = parse_key_value_string (conf_str, tabrmd_tls_kv_callback, &conf);
+    assert_int_equal (rc, TSS2_RC_SUCCESS);
+    assert_int_equal (conf.port, 53432);
+}
+/*
+ * When passed a URL with an invalid port the `parse_conf_str` function
+ * returns TSS2_TCTI_RC_BAD_VALUE.
+ */
+static void
+parse_conf_str_invalid_port_test (void **state)
+{
+    TSS2_RC rc;
+    tabrmd_tls_conf_t conf = { 0 };
+    char conf_str[] = "port=66666";
+
+    rc = parse_key_value_string (conf_str, tabrmd_tls_kv_callback, &conf);
+    assert_int_equal (rc, TSS2_TCTI_RC_BAD_VALUE);
+}
+/*
+ * When passed a URL with a query string, if the key "tls" corresponds to the
+ * value "true" then the `tls` parameter to `parse_conf_str` will be set to
+ * TRUE.
+ */
+static void
+parse_conf_str_tls_true_test (void **state)
+{
+    TSS2_RC rc;
+    tabrmd_tls_conf_t conf = { 0 };
+    char conf_str [] = "tls=true";
+
+    rc = parse_key_value_string (conf_str, tabrmd_tls_kv_callback, &conf);
+    assert_int_equal (rc, TSS2_RC_SUCCESS);
+    assert_true (conf.tls_enabled);
+}
+/*
+ * When passed a URL with a query string, if the key "tls" corresponds to the
+ * value "false" then the `tls` parameter to `parse_conf_str` will be set to
+ * FALSE.
+ */
+static void
+parse_conf_str_tls_false_test (void **state)
+{
+    TSS2_RC rc;
+    tabrmd_tls_conf_t conf = { 0 };
+    char conf_str [] = "tls=false";
+
+    rc = parse_key_value_string (conf_str, tabrmd_tls_kv_callback, &conf);
+    assert_int_equal (rc, TSS2_RC_SUCCESS);
+    assert_false (conf.tls_enabled);
+}
+/*
+ * When passed a URL with a query string, if the key "tls" cooresponds to any
+ * value other than "true" or "false" then the parse_conf_str function will
+ * return TSS2_TCTI_RC_BAD_VALUE.
+ */
+static void
+parse_conf_str_tls_bad_val_test (void **state)
+{
+    TSS2_RC rc;
+    tabrmd_tls_conf_t conf = { 0 };
+    char conf_str [] = "tls=foo";
+
+    rc = parse_key_value_string (conf_str, tabrmd_tls_kv_callback, &conf);
+    assert_int_equal (rc, TSS2_TCTI_RC_BAD_VALUE);
+}
+
+/*
+ * When passed a URL with a query string, if the first key is anything other
+ * than "tls" then the `parse_conf_str` function will return
+ * TSS2_TCTI_RC_BAD_VALUE.
+ */
+static void
+parse_conf_str_bad_key_test (void **state)
+{
+    TSS2_RC rc;
+    tabrmd_tls_conf_t conf = { 0 };
+    char conf_str [] = "foo=bar";
+
+    rc = parse_key_value_string (conf_str, tabrmd_tls_kv_callback, &conf);
+    assert_int_equal (rc, TSS2_TCTI_RC_BAD_VALUE);
+}
+/*
  * when given an NULL context and a pointer to a size_t, set the size_t
  * parameter to the size of the TSS2_TCTI_TABRMD_TLS_CONTEXT structure.
  */
@@ -55,10 +195,7 @@ tcti_tabrmd_tls_init_size_test (void **state)
 {
     size_t tcti_size;
 
-    tss2_tcti_tabrmd_tls_init (NULL, &tcti_size,
-                               IPC_SERVER_SOCKET_IPV4_MT,
-                               IPC_SERVER_SOCKET_PORT_MT,
-                               NULL, 1);
+    Tss2_Tcti_Tabrmd_Tls_Init (NULL, &tcti_size, NULL);
     assert_int_equal (tcti_size, sizeof (TSS2_TCTI_TABRMD_TLS_CONTEXT));
 }
 /*
@@ -71,11 +208,7 @@ tcti_tabrmd_tls_init_success_return_value_test (void **state)
     size_t tcti_size;
     TSS2_RC ret;
 
-    ret = tss2_tcti_tabrmd_tls_init (NULL, &tcti_size,
-                                     IPC_SERVER_SOCKET_IPV4_MT,
-                                     IPC_SERVER_SOCKET_PORT_MT,
-                                     NULL, 1);
-
+    ret = Tss2_Tcti_Tabrmd_Tls_Init (NULL, &tcti_size, NULL);
     assert_int_equal (ret, TSS2_RC_SUCCESS);
 }
 /*
@@ -83,15 +216,12 @@ tcti_tabrmd_tls_init_success_return_value_test (void **state)
  * an error indicating that the values are bad (TSS2_TCTI_RC_BAD_VALUE)
  */
 static void
-tcti_tabrmd_tls_init_allnull_is_bad_value_test (void **state)
+tcti_tabrmd_tls_init_allnull_is_bad_ref_test (void **state)
 {
     TSS2_RC ret;
 
-    ret = tss2_tcti_tabrmd_tls_init (NULL, NULL,
-                                     IPC_SERVER_SOCKET_IPV4_MT,
-                                     IPC_SERVER_SOCKET_PORT_MT,
-                                     NULL, 1);
-    assert_int_equal (ret, TSS2_TCTI_RC_BAD_VALUE);
+    ret = Tss2_Tcti_Tabrmd_Tls_Init (NULL, NULL, NULL);
+    assert_int_equal (ret, TSS2_TCTI_RC_BAD_REFERENCE);
 }
 /*
  * This is a mock function to control return values from the connection
@@ -177,10 +307,9 @@ tcti_tabrmd_tls_setup (void **state)
                                         server_side_func,
                                         data);
 
-    ret = tss2_tcti_tabrmd_tls_init (NULL, &tcti_size,
-                                     ip_addr, port, NULL, 0);
+    ret = Tss2_Tcti_Tabrmd_Tls_Init (NULL, &tcti_size, NULL);
     if (ret != TSS2_RC_SUCCESS) {
-        printf ("tss2_tcti_tabrmd_tls_init failed: %d\n", ret);
+        printf ("Tss2_Tcti_Tabrmd_Tls_Init failed: %d\n", ret);
         return 1;
     }
     data->context = calloc (1, tcti_size);
@@ -192,8 +321,7 @@ tcti_tabrmd_tls_setup (void **state)
     data->id = id;
     will_return (__wrap_g_str_hash, id);
     g_debug ("about to call real tss2_tcti_tabrmd_tls_init function");
-    ret = tss2_tcti_tabrmd_tls_init (data->context, &tcti_size,
-                                     ip_addr, port, NULL, 0);
+    ret = Tss2_Tcti_Tabrmd_Tls_Init (data->context, &tcti_size, "port=44334");
     assert_int_equal (ret, TSS2_RC_SUCCESS);
 
     *state = data;
@@ -1141,9 +1269,18 @@ int
 main(int argc, char* argv[])
 {
     const struct CMUnitTest tests[] = {
+        cmocka_unit_test (string_to_port_invalid_test),
+        cmocka_unit_test (string_to_port_valid_test),
+        cmocka_unit_test (parse_conf_str_hostname_test),
+        cmocka_unit_test (parse_conf_str_port_test),
+        cmocka_unit_test (parse_conf_str_invalid_port_test),
+        cmocka_unit_test (parse_conf_str_tls_true_test),
+        cmocka_unit_test (parse_conf_str_tls_false_test),
+        cmocka_unit_test (parse_conf_str_tls_bad_val_test),
+        cmocka_unit_test (parse_conf_str_bad_key_test),
         cmocka_unit_test (tcti_tabrmd_tls_init_size_test),
         cmocka_unit_test (tcti_tabrmd_tls_init_success_return_value_test),
-        cmocka_unit_test (tcti_tabrmd_tls_init_allnull_is_bad_value_test),
+        cmocka_unit_test (tcti_tabrmd_tls_init_allnull_is_bad_ref_test),
         cmocka_unit_test (tcti_tabrmd_tls_init_success_test),
         cmocka_unit_test_setup_teardown (tcti_tabrmd_tls_magic_test,
                                          tcti_tabrmd_tls_setup,

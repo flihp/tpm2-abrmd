@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, Intel Corporation
+ * Copyright (c) 2017 - 2018, Intel Corporation
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -32,7 +32,9 @@
 
 #include <tss2/tss2_tcti.h>
 
+#include "ipc-frontend-tls.h"
 #include "tpm2-header.h"
+#include "util.h"
 
 #define TSS2_TCTI_TABRMD_TLS_MAGIC 0x1c8e03ff00db0f93
 #define TSS2_TCTI_TABRMD_TLS_VERSION 1
@@ -59,6 +61,19 @@
     g_io_stream_get_input_stream (TSS2_TCTI_TABRMD_TLS_IOSTREAM(context))
 #define TSS2_TCTI_TABRMD_TLS_OSTREAM(context) \
     g_io_stream_get_output_stream (TSS2_TCTI_TABRMD_TLS_IOSTREAM(context))
+
+#define TABRMD_TLS_CONF_INIT_DEFAULT { \
+    .hostname = IPC_FRONTEND_SOCKET_IP_DEFAULT, \
+    .port = IPC_FRONTEND_SOCKET_PORT_DEFAULT, \
+    .tls_enabled = FALSE, \
+    .certfile = NULL, \
+}
+typedef struct {
+    const char *hostname;
+    uint16_t port;
+    gboolean tls_enabled;
+    const char *certfile;
+} tabrmd_tls_conf_t;
 
 /*
  * The elements in this enumeration represent the possible states that the
@@ -108,5 +123,11 @@ typedef struct {
     size_t                         index;
     uint8_t                        header_buf [TPM_HEADER_SIZE];
 } TSS2_TCTI_TABRMD_TLS_CONTEXT;
+
+uint16_t
+string_to_port (const char port_str[6]);
+TSS2_RC
+tabrmd_tls_kv_callback (const key_value_t *key_value,
+                        gpointer user_data);
 
 #endif /* TSS2TCTI_TABRMD_TLS_PRIV_H */

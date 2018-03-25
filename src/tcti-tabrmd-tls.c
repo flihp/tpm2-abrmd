@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, Intel Corporation
+ * Copyright (c) 2017 - 2018, Intel Corporation
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -31,6 +31,8 @@
 #include <glib.h>
 #include <inttypes.h>
 #include <poll.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <tss2/tss2_tcti.h>
@@ -498,48 +500,135 @@ tcti_tabrmd_call_create_connection_tls (const char       *ip_addr,
 
     return TRUE;
 }
+/*
+ * This is a utility function to extract a TCP port number from a string.
+ * The string must be 6 characters long. If the supplied string contains an
+ * invalid port number then 0 is returned.
+ */
+uint16_t
+string_to_port (const char port_str[6])
+{
+    uint32_t port = 0;
 
+    if (sscanf (port_str, "%" SCNu32, &port) == EOF || port > UINT16_MAX) {
+        return 0;
+    }
+    return port;
+}
+/*
+ * This is a callback function passed into the parse_key_value_string utility
+ * function. This function is responsible for identifying keys from the
+ * string of key / value pairs in the configuration string, extracting the
+ * associated values and then storing them in a tabrmd_tls_conf_t structure.
+ * A reference to this structure must be passed into the
+ * 'parse_key_value_string' function which will pass it to each invocation of
+ * this callback.
+ */
 TSS2_RC
-tss2_tcti_tabrmd_tls_init (TSS2_TCTI_CONTEXT      *context,
-                           size_t                 *size,
-                           const char             *ip_addr,
-                           unsigned int            port,
-                           const char             *cert_file,
-                           bool                    tls_enabled)
+tabrmd_tls_kv_callback (const key_value_t *key_value,
+                        gpointer user_data)
+{
+    tabrmd_tls_conf_t *tabrmd_tls_conf = (tabrmd_tls_conf_t*)user_data;
+
+    if (key_value == NULL || user_data == NULL) {
+        g_warning ("%s passed NULL parameter", __func__);
+        return TSS2_TCTI_RC_GENERAL_FAILURE;
+    }
+    g_debug ("key: %s / value: %s\n", key_value->key, key_value->value);
+    if (strcmp (key_value->key, "host") == 0) {
+        if (key_value->value == NULL) {
+            g_warning ("Value for key \"host\" is NULL");
+        }
+        tabrmd_tls_conf->hostname = key_value->value;
+    } else if (strcmp (key_value->key, "port") == 0) {
+        tabrmd_tls_conf->port = string_to_port (key_value->value);
+        if (tabrmd_tls_conf->port == 0) {
+            g_warning ("invalid port number");
+            return TSS2_TCTI_RC_BAD_VALUE;
+        }
+    } else if (strcmp (key_value->key, "tls") == 0) {
+        if (strcmp (key_value->value, "true") == 0) {
+            tabrmd_tls_conf->tls_enabled = TRUE;
+        } else if (strcmp (key_value->value, "false") == 0) {
+            tabrmd_tls_conf->tls_enabled = FALSE;
+        } else {
+            g_warning ("invalid value for key \"tls\"");
+            return TSS2_TCTI_RC_BAD_VALUE;
+        }
+    } else if (strcmp (key_value->key, "cert") == 0) {
+        if (key_value->value == NULL) {
+            g_warning ("Value for key \"cert\" is NULL");
+        }
+        tabrmd_tls_conf->certfile = key_value->value;
+    } else {
+        g_warning ("Invalid key in conf string: %s.", key_value->key);
+        return TSS2_TCTI_RC_BAD_VALUE;
+    }
+    return TSS2_RC_SUCCESS;
+}
+/*
+ * Initialization function taking all configuration parameters encoded in a
+ * string.
+ */
+#define CONF_STRING_MAX (PATH_MAX + 1)
+TSS2_RC
+Tss2_Tcti_Tabrmd_Tls_Init (TSS2_TCTI_CONTEXT *context,
+                           size_t *size,
+                           const char *conf)
 {
     GSocket *socket = NULL;
     GCancellable *cancellable = NULL;
     GIOStream *connection = NULL;
-    GTlsCertificate  *certificate = NULL;
+    GTlsCertificate  *cert = NULL;
     guint64 id;
     GError *error = NULL;
+    char *conf_copy = NULL;
+    size_t conf_len;
     gboolean ret = FALSE;
+    TSS2_RC rc;
+    tabrmd_tls_conf_t tabrmd_tls_conf = TABRMD_TLS_CONF_INIT_DEFAULT;
 
-    if (context == NULL && size == NULL) {
-        return TSS2_TCTI_RC_BAD_VALUE;
+    if (size == NULL) {
+        return TSS2_TCTI_RC_BAD_REFERENCE;
     }
-    if (context == NULL && size != NULL) {
+    if (context == NULL) {
         *size = sizeof (TSS2_TCTI_TABRMD_TLS_CONTEXT);
         return TSS2_RC_SUCCESS;
     }
-    if (ip_addr == NULL) {
-        return TSS2_TCTI_RC_BAD_VALUE;
+    if (*size < sizeof (TSS2_TCTI_TABRMD_TLS_CONTEXT)) {
+        return TSS2_TCTI_RC_INSUFFICIENT_BUFFER;
     }
-    if (cert_file) {
-        certificate = g_tls_certificate_new_from_file (cert_file, &error);
-        if (!certificate) {
-            g_warning ("Could not read certificate '%s': %s",
-                       cert_file, error->message);
-            g_error_free (error);
+    if (conf != NULL) {
+        conf_len = strlen (conf);
+        if (conf_len > CONF_STRING_MAX) {
+            g_warning ("configuration string is too long, max characters: %d",
+                       CONF_STRING_MAX);
             return TSS2_TCTI_RC_BAD_VALUE;
+        }
+        conf_copy = g_strdup (conf);
+        rc = parse_key_value_string (conf_copy,
+                                     tabrmd_tls_kv_callback,
+                                     &tabrmd_tls_conf);
+        if (rc != TSS2_RC_SUCCESS) {
+            goto out;
+        }
+    }
+    if (tabrmd_tls_conf.certfile) {
+        cert = g_tls_certificate_new_from_file (tabrmd_tls_conf.certfile,
+                                                &error);
+        if (!cert) {
+            g_critical ("Could not read certificate '%s': %s",
+                        tabrmd_tls_conf.certfile, error->message);
+            rc = TSS2_TCTI_RC_BAD_VALUE;
+            goto out;
         }
     }
 
     init_tcti_data (context);
-    ret = tcti_tabrmd_call_create_connection_tls(ip_addr,
-                                                 port,
-                                                 tls_enabled,
-                                                 certificate,
+    ret = tcti_tabrmd_call_create_connection_tls(tabrmd_tls_conf.hostname,
+                                                 tabrmd_tls_conf.port,
+                                                 tabrmd_tls_conf.tls_enabled,
+                                                 cert,
                                                  cancellable,
                                                  &connection,
                                                  &socket,
@@ -548,8 +637,8 @@ tss2_tcti_tabrmd_tls_init (TSS2_TCTI_CONTEXT      *context,
     if (ret == FALSE) {
         g_warning ("Failed to create connection with service: %s",
                    error->message);
-        g_error_free (error);
-        return TSS2_TCTI_RC_NO_CONNECTION;
+        rc = TSS2_TCTI_RC_NO_CONNECTION;
+        goto out;
     }
 
     TSS2_TCTI_TABRMD_TLS_ID (context) = id;
@@ -557,8 +646,27 @@ tss2_tcti_tabrmd_tls_init (TSS2_TCTI_CONTEXT      *context,
              TSS2_TCTI_TABRMD_TLS_ID (context));
     TSS2_TCTI_TABRMD_TLS_SOCKET (context) = socket;
     TSS2_TCTI_TABRMD_TLS_IOSTREAM (context) = connection;
+out:
+    g_clear_pointer (&conf_copy, g_free);
+    g_clear_error (&error);
+    g_clear_object (&cert);
+    return rc;
+}
 
-    if (certificate)
-        g_object_unref (certificate);
-    return TSS2_RC_SUCCESS;
+static const TSS2_TCTI_INFO tss2_tcti_info = {
+    .version = {
+        .magic = TSS2_TCTI_TABRMD_TLS_MAGIC,
+        .version = TSS2_TCTI_TABRMD_TLS_VERSION,
+    },
+    .name = "tss2-tcti-tabrmd-tls",
+    .description = "TCTI module for communication with tpm2-abrmd over TCP/IP "
+        "and optionally TLS.",
+    .config_help = "",
+    .init = Tss2_Tcti_Tabrmd_Tls_Init,
+};
+
+const TSS2_TCTI_INFO*
+Tss2_Tcti_Info (void)
+{
+    return &tss2_tcti_info;
 }
