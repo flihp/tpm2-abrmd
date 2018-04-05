@@ -31,6 +31,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tss2-tcti-tabrmd.h"
+#include "tcti-tabrmd-tls.h"
+
 #include "context-util.h"
 #include "tcti-util.h"
 #include "common.h"
@@ -58,14 +61,15 @@ tcti_dynamic_init (const char *filename,
  * Initialize a TCTI context for the tabrmd. Currently it requires no options.
  */
 TSS2_TCTI_CONTEXT*
-tcti_tabrmd_init (const char *conf)
+tcti_init (TSS2_TCTI_INIT_FUNC init_func,
+           const char *conf)
 {
     TSS2_RC rc;
     TSS2_TCTI_CONTEXT *tcti_ctx;
     size_t size;
 
     g_debug ("%s: with conf: \"%s\"", __func__, conf);
-    rc = Tss2_Tcti_Tabrmd_Init (NULL, &size, NULL);
+    rc = init_func (NULL, &size, NULL);
     if (rc != TSS2_RC_SUCCESS) {
         fprintf (stderr, "Failed to get allocation size for tabrmd TCTI "
                  " context: 0x%" PRIx32 "\n", rc);
@@ -77,7 +81,7 @@ tcti_tabrmd_init (const char *conf)
                  strerror (errno));
         return NULL;
     }
-    rc = Tss2_Tcti_Tabrmd_Init (tcti_ctx, &size, conf);
+    rc = init_func (tcti_ctx, &size, conf);
     if (rc != TSS2_RC_SUCCESS) {
         fprintf (stderr, "Failed to initialize tabrmd TCTI context: "
                  "0x%" PRIx32 "\n", rc);
@@ -148,10 +152,22 @@ sapi_init_from_opts (test_opts_t *options)
 TSS2_TCTI_CONTEXT*
 tcti_init_from_opts (test_opts_t *options)
 {
-    if (options->tcti_filename != NULL) {
-        return tcti_dynamic_init (options->tcti_filename, options->tcti_conf);
+    g_debug ("%s: with test_opts_t: 0x%" PRIxPTR, __func__, (uintptr_t)options);
+    dump_test_opts (options);
+    if (options->tcti_filename == NULL ||
+        strcmp (options->tcti_filename, "tabrmd") == 0) {
+        g_debug ("%s: initializing TCTI with Tss2_Tcti_Tabrmd_Init with conf: "
+                 "%s", __func__, options->tcti_conf);
+        return tcti_init (Tss2_Tcti_Tabrmd_Init, options->tcti_conf);
+    } else if (strcmp (options->tcti_filename, "tabrmd-tls") == 0) {
+        g_debug ("%s: initializing TCTI with Tss2_Tcti_Tabrmd_Tls_Init with "
+                 "conf: %s", __func__, options->tcti_conf);
+        return tcti_init (Tss2_Tcti_Tabrmd_Tls_Init, options->tcti_conf);
     } else {
-        return tcti_tabrmd_init (options->tcti_conf);
+        g_debug ("%s: initializing TCTI dynamically with TCTI filename: %s "
+                 "and conf: %s", __func__, options->tcti_filename,
+                 options->tcti_conf);
+        return tcti_dynamic_init (options->tcti_filename, options->tcti_conf);
     }
 }
 /*

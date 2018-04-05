@@ -58,9 +58,12 @@ END
 SIM_BIN=""
 TABRMD_BIN=""
 TABRMD_TCTI="mssim"
+IPC_MODE="dbus"
 while test $# -gt 0; do
     case $1 in
     --help) print_usage; exit $?;;
+    -i|--ipc-mode) IPC_MODE=$2; shift;;
+    -i=*|--ipc-mode=*) IPC_MODE="${1#*=}";;
     -s|--simulator-bin) SIM_BIN=$2; shift;;
     -s=*|--simulator-bin=*) SIM_BIN="${1#*=}";;
     -r|--tabrmd-bin) TABRMD_BIN=$2; shift;;
@@ -73,6 +76,41 @@ while test $# -gt 0; do
     esac
     shift
 done
+
+# matrix of tabrmd-tcti & ipc-mode
+#
+# tabrmd-tcti: mssim
+# icp-mode: dbus
+#   - Parallelizable: yes
+#   - Run as unpriv user: yes
+#   - Must start mssim instance for TPM, we can assign a random port for the
+#     mssim to bind to to allow tests to run in parallel. This requries that
+#     we implement a retry loop to deal with port conflicts.
+#   - tpm2-abrmd must use 'session' bus and claim unique name. Easiest way to
+#     do this is to just append the random port nummber used by mssim to the
+#     standard 'com.intel.tss2.Tabrmd' name.
+#
+# tabrmd-tcti: device
+# ipc-mode: dbus
+#  - Parallelizable: no
+#  - Run as unpriv user: no (/dev/tpm0 is assumed to be owned by root)
+#  - No need to start mssim since we're talking to /dev/tpm0 directly
+#  - No need to give tpm2-abrmd a unique name, since we're running as root
+#    we connect the tpm2-abrmd to the system bus and use the default name.
+#
+# tabrmd-tcti: mssim
+# ipc-mode: tls
+#  - Parallelizable: yes
+#  - Run as unpriv user: yes
+#  - Starup the mssim in the same way we did for mssim,dbus tuple above.
+#  - tpm2-abrmd must be assigned a random port much like we do for the mssim.
+#
+# tabrmd-tcti: device
+# ipc-mode: tls
+#  - Parallelizable: no
+#  - Run as unpriv user: no
+#  - No need to start mssim for same reasons as device,dbus tuple above.
+#  - tpm2-abrmd must be assigned a random port much like we do for the missim.
 
 # Once option processing is done, $@ should be the name of the test executable
 # followed by all of the options passed to the test executable.
@@ -95,6 +133,15 @@ if [ ! -x "${TEST_BIN}" ]; then
     echo "no test binary provided or not executable"
     exit 1
 fi
+case "${IPC_MODE}"
+in
+    "dbus") ;;
+    "tls") ;;
+    *)
+        echo "Invalid --ipc-mode, see --help."
+        exit 1
+        ;;
+esac
 case "${TABRMD_TCTI}"
 in
     "mssim")
@@ -124,8 +171,6 @@ esac
 case "${TABRMD_TCTI}"
 in
     "mssim")
-        TABRMD_OPTS="--session"
-        TABRMD_TEST_TCTI_CONF="bus_type=session"
         # start an instance of the simulator for the test, have it use a random port
         SIM_LOG_FILE=${TEST_BIN}_simulator.log
         SIM_PID_FILE=${TEST_BIN}_simulator.pid
@@ -160,33 +205,88 @@ in
                 exit 1
             fi
         done
-        TABRMD_NAME="com.intel.tss2.Tabrmd${SIM_PORT_DATA}"
-        TABRMD_OPTS="${TABRMD_OPTS} --dbus-name=${TABRMD_NAME}"
         TABRMD_OPTS="${TABRMD_OPTS} --tcti=${TABRMD_TCTI}:tcp://127.0.0.1:${SIM_PORT_DATA}"
-        TABRMD_TEST_TCTI_CONF="${TABRMD_TEST_TCTI_CONF},bus_name=${TABRMD_NAME}"
         ;;
     "device")
         TABRMD_OPTS="--allow-root --tcti=device:/dev/tpm0"
-        SIM_PORT_DATA=$(od -A n -N 2 -t u2 /dev/urandom | \
-                        awk -v min=${PORT_MIN} -v max=${PORT_MAX} \
-                        '{print ($1 % (max - min)) + min}')
         ;;
     *)
-        echo "whoops"
+        echo "unsupported TCTI: ${TABRMD_TCTI}"
         exit 1
         ;;
 esac
 
-# start tpm2-abrmd daemon
 TABRMD_LOG_FILE=${TEST_BIN}_tabrmd.log
 TABRMD_PID_FILE=${TEST_BIN}_tabrmd.pid
-tabrmd_start ${TABRMD_BIN} ${TABRMD_LOG_FILE} ${TABRMD_PID_FILE} "${TABRMD_OPTS}"
-if [ $? -ne 0 ]; then
+TABRMD_OPTS="${TABRMD_OPTS} --ipc-mode=${IPC_MODE}"
+case "${IPC_MODE}"
+in
+    "dbus")
+        TABRMD_OPTS="${TABRMD_OPTS} --session"
+        TABRMD_TEST_TCTI_CONF="bus_type=session"
+        case "${TABRMD_TCTI}"
+        in
+            "mssim") # (mssim,dbus)
+                TABRMD_NAME="com.intel.tss2.Tabrmd${SIM_PORT_DATA}"
+                TABRMD_OPTS="${TABRMD_OPTS} --dbus-name=${TABRMD_NAME}"
+                TABRMD_TEST_TCTI_CONF="${TABRMD_TEST_TCTI_CONF},bus_name=${TABRMD_NAME}"
+                tabrmd_start ${TABRMD_BIN} ${TABRMD_LOG_FILE} ${TABRMD_PID_FILE} "${TABRMD_OPTS}"
+                tabrmd_start_ret=$?
+                ;;
+            "device") # (device,dbus)
+                # do nothing, use defaults
+                tabrmd_start ${TABRMD_BIN} ${TABRMD_LOG_FILE} ${TABRMD_PID_FILE} "${TABRMD_OPTS}"
+                tabrmd_start_ret=$?
+                ;;
+        esac
+        ;;
+    "tls")
+        TABRMD_TEST_TCTI=tabrmd-tls
+        case "${TABRMD_TCTI}"
+        in
+            "mssim") # (mssim,tls)
+                BACKOFF_FACTOR=2
+                BACKOFF=1
+                for i in $(seq 10); do
+                    TABRMD_PORT=$(od -A n -N 2 -t u2 /dev/urandom | awk -v min=${PORT_MIN} -v max=${PORT_MAX} '{print ($1 % (max - min)) + min}')
+                    echo "Starting ${TABRMD_BIN} on port ${TABRMD_PORT}"
+                    tabrmd_start ${TABRMD_BIN} ${TABRMD_LOG_FILE} ${TABRMD_PID_FILE} "${TABRMD_OPTS} --socket-port=${TABRMD_PORT}"
+                    sleep 1 # give daemon time to bind to ports
+                    PID=$(cat ${TABRMD_PID_FILE})
+                    echo "simulator PID: ${PID}";
+                    netstat -ltpn 2> /dev/null | grep "${PID}" | grep -q "${TABRMD_PORT}"
+                    netstat_ret=$?
+                    if [ $netstat_ret -eq 0 ]; then
+                        echo "${TABRMD_BIN} with PID ${PID} bound to port ${TABRMD_PORT}"
+                        break
+                    fi
+                    echo "Port conflict? Cleaning up PID: ${PID}"
+                    kill "${PID}"
+                    BACKOFF=$((${BACKOFF}*${BACKOFF_FACTOR}))
+                    echo "Failed to start ${TABRMD_BIN}: port ${TABRMD_PORT}. Retrying in ${BACKOFF}."
+                    sleep ${BACKOFF}
+                    if [ $i -eq 10 ]; then
+                        echo "Failed to start ${TABRMD_BIN} after $i tries. Giving up.";
+                        exit 1
+                    fi
+                done
+                TABRMD_TEST_TCTI_CONF="host=127.0.0.1,port=${TABRMD_PORT}"
+                tabrmd_start_ret=$?
+                ;;
+            "device") # (device,tls)
+                tabrmd_start ${TABRMD_BIN} ${TABRMD_LOG_FILE} ${TABRMD_PID_FILE} "${TABRMD_OPTS}"
+                tabrmd_start_ret=$?
+                ;;
+        esac
+        ;;
+esac
+# start tpm2-abrmd daemon
+if [ ${tabrmd_start_ret} -ne 0 ]; then
     echo "failed to start tabrmd with name ${TABRMD_NAME}"
 fi
 
 # execute the test script and capture exit code
-env G_MESSAGES_DEBUG=all TABRMD_TEST_TCTI_CONF="${TABRMD_TEST_TCTI_CONF}" TABRMD_TEST_TCTI_RETRIES=10 $@
+env G_MESSAGES_DEBUG=all TABRMD_TEST_TCTI="${TABRMD_TEST_TCTI}" TABRMD_TEST_TCTI_CONF="${TABRMD_TEST_TCTI_CONF}" TABRMD_TEST_TCTI_RETRIES=10 $@
 ret_test=$?
 
 # This sleep is sadly necessary: If we kill the tabrmd w/o sleeping for a
