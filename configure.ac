@@ -122,19 +122,30 @@ AC_ARG_WITH([simulatorbin],
              with_simulatorbin_set=no])
 AM_CONDITIONAL([SIMULATOR_BIN],[test "x$with_simulatorbin_set" = "xyes"])
 #
-# Real TPM hardware
+# TCTI used by tpm2-abrmd for integration tests.
 #
-AC_ARG_ENABLE([test-hwtpm],
-              [AS_HELP_STRING([--enable-test-hwtpm],
-                  [enable the integration test on a real tpm hardware (default is no)])],
-              [enable_hwtpm=$enableval],
-              [enable_hwtpm=no])
-AS_IF([test \( "x$with_simulatorbin_set" = "xyes" \) -a \( "x$enable_hwtpm" = "xyes" \) ],
-      AC_MSG_ERROR([--with-simulatorbin cannot be provided with --enable-test-hwtpm.]))
-AM_CONDITIONAL([HWTPM], [test "x$enable_hwtpm" != xno])
-
-AS_IF([test \( "x$with_simulatorbin_set" = "xno" \) -a \( "x$enable_hwtpm" = "xno" \) ],
-      AC_MSG_WARN([No simulator binary or tpm hardware provided. Integration tests disabled.]))
+AC_MSG_CHECKING([Checking for TCTI $with_test_tcti])
+AC_ARG_WITH([test-tcti],
+            [AS_HELP_STRING([--with-test-tcti],
+                [Use the provided TCTI when launching the tpm2-abrmd for integration tests (default is 'mssim')])],
+            [AC_MSG_RESULT([$with_test_tcti])],
+            [with_test_tcti=mssim
+             AC_MSG_RESULT([mssim])])
+AS_IF([test \( "x$with_simulatorbin_set" = "xyes" \) -a \( "x$with_test_tcti" != "xmssim" \) ],
+      AC_MSG_WARN([--with-simulatorbin is only useful when provided with --with-test-tcti=\"mssim\", disregarding.]))
+AC_SUBST([TABRMD_TEST_TCTI],[$with_test_tcti])
+#
+# IPC frontend used by default in the test harness.
+#
+AC_ARG_WITH([test-ipcfront],
+            [AS_HELP_STRING([--with-test-ipcfront],
+                [IPC frontend used by the test harness. Default is 'dbus'. Alternative is 'tls'.])],
+            [AC_MSG_RESULT([Default IPC frontend selected: $with_test_ipcfront])],
+            [AC_MSG_RESULT([No IPC frontend for test harness provided. Using default: dbus])
+             with_test_ipcfront=dbus])
+AC_SUBST([TABRMD_TEST_IPCFRONT],[$with_test_ipcfront])
+AS_IF([test \( "x$with_test_ipcfront" != "xdbus" \) -a \( "x$with_test_ipcfront" != "xtls" \) ],
+      AC_MSG_ERROR([Invalid value for --with-test-ipcfront. Supported values are \"dbus\" or \"tls\".]))
 
 # preprocessor / compiler / linker flags
 #   these macros are defined in m4/flags.m4
