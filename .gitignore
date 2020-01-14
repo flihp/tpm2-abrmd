@@ -12,6 +12,7 @@ tmp/
 *.pp
 *.pp.bz2
 *.swp
+*.tmp
 *.trs
 AUTHORS
 Makefile
@@ -42,6 +43,8 @@ man/man*/
 missing
 test-driver
 test-suite.log
+selinux/all_interfaces.conf
+selinux/iferror.m4
 src/tpm2-abrmd
 src/tabrmd-generated.c
 src/tabrmd-generated.h
