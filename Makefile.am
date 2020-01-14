@@ -8,6 +8,11 @@ ACLOCAL_AMFLAGS = -I m4 --install
 unit-count: check
 	sh scripts/unit-count.sh
 
+CLEAN_LOCAL_DEPS =
+CLEAN_LOCALS =
+clean-local: $(CLEAN_LOCAL_DEPS)
+	$(CLEAN_LOCALS)
+
 AM_CFLAGS = $(EXTRA_CFLAGS) \
     -I$(srcdir)/src -I$(srcdir)/src/include -I$(builddir)/src \
     $(GIO_CFLAGS) $(GLIB_CFLAGS) $(PTHREAD_CFLAGS) \
@@ -167,7 +172,7 @@ endif # HAVE_SYSTEMD
 # ax_code_coverage
 if AUTOCONF_CODE_COVERAGE_2019_01_06
 include $(top_srcdir)/aminclude_static.am
-clean-local: code-coverage-clean
+CLEAN_LOCAL_DEPS += code-coverage-clean
 distclean-local: code-coverage-dist-clean
 
 # workaround for a bug in Autoconf Archive 2019.01.06
@@ -518,3 +523,22 @@ test_integration_tpm2_command_flush_no_handle_int_SOURCES = \
 test_integration_util_buf_max_upper_bound_int_LDADD = $(TEST_INT_LIBS)
 test_integration_util_buf_max_upper_bound_int_SOURCES = \
     test/integration/main.c test/integration/util-buf-max-upper-bound.int.c
+
+if WITH_REFPOL
+
+refpoldir = $(datadir)/packages
+refpol_DATA = selinux/tabrmd.pp.bz2
+
+refpolifdir = $(datadir)/selinux/devel/include/contrib
+refpolif_DATA = selinux/tabrmd.if
+
+CLEANFILES += $(refpol_DATA)
+CLEAN_LOCALS += rm -rf selinux/tmp
+
+%.pp: %.te
+	make -C selinux $(nodir $@)
+
+%.pp.bz2: %.pp
+	make -C selinux $(nodir $@)
+
+endif

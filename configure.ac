@@ -111,6 +111,22 @@ AC_ARG_WITH([dbuspolicydir],
             [with_dbuspolicydir=${sysconfdir}/dbus-1/system.d])
 AX_NORMALIZE_PATH([with_dbuspolicydir])
 AC_SUBST([dbuspolicydir], [$with_dbuspolicydir])
+
+# selinux reference policy
+AC_ARG_WITH(
+    [refpol],
+    AS_HELP_STRING([--with-refpol],[build SELinux policy module]),
+    [
+        with_refpol=yes
+        AM_PATH_PYTHON([3])
+        AC_PATH_PROG([CHECKMODULE],[checkmodule],[checkmodule])
+        AC_PATH_PROG([BZIP2],[bzip2],[bzip2])
+        AC_PATH_PROG([SEMODULE],[semodule],[semodule])
+        AC_PATH_PROG([SEMOD_PKG],[semodule-package],[semodule-package])
+        AC_PATH_PROG([XMLLINT],[xmllint],[xmllint])
+    ])
+AM_CONDITIONAL([WITH_REFPOL], [test "x$with_refpol" = xyes])
+
 #
 # Real TPM hardware
 #
