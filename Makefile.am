@@ -41,6 +41,7 @@ TESTS_UNIT = \
     test/tcti_unit \
     test/thread_unit \
     test/tpm2-command_unit \
+    test/tpm2-header_unit \
     test/tpm2-response_unit \
     test/tss2-tcti-tabrmd_unit \
     test/tcti-tabrmd-receive_unit \
@@ -389,6 +390,10 @@ test_thread_unit_SOURCES = test/thread_unit.c
 test_tpm2_command_unit_CFLAGS = $(UNIT_CFLAGS)
 test_tpm2_command_unit_LDADD = $(UNIT_LIBS)
 test_tpm2_command_unit_SOURCES = test/tpm2-command_unit.c
+
+test_tpm2_header_unit_CFLAGS = $(UNIT_CFLAGS)
+test_tpm2_header_unit_LDADD = $(UNIT_LIBS)
+test_tpm2_header_unit_SOURCES = src/tpm2-header-gobject.c test/tpm2-header_unit.c
 
 test_tpm2_response_unit_CFLAGS = $(UNIT_CFLAGS)
 test_tpm2_response_unit_LDADD = $(UNIT_LIBS)
