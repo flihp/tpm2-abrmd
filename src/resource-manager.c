@@ -938,9 +938,9 @@ build_cap_handles_response (TPMS_CAPABILITY_DATA *cap_data,
         tabrmd_critical ("failed to allocate buffer for handle capability "
                          "response");
     }
-    set_response_tag (buf, TPM2_ST_NO_SESSIONS);
-    set_response_size (buf, CAP_RESP_SIZE (cap_data));
-    set_response_code (buf, TSS2_RC_SUCCESS);
+    tpm2_header_set_tag (buf, TPM2_ST_NO_SESSIONS);
+    tpm2_header_set_size (buf, CAP_RESP_SIZE (cap_data));
+    tpm2_header_set_response_code (buf, TSS2_RC_SUCCESS);
     YES_NO_SET (buf, more_data);
     CAP_SET (buf, cap_data->capability);
     HANDLE_COUNT_SET (buf, cap_data->data.handles.count);

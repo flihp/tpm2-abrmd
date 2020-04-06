@@ -340,21 +340,21 @@ tpm2_command_get_buffer (Tpm2Command *command)
 TPM2_CC
 tpm2_command_get_code (Tpm2Command *command)
 {
-    return get_command_code (command->buffer);
+    return tpm2_header_get_command_code (command->buffer);
 }
 /**
  */
 guint32
 tpm2_command_get_size (Tpm2Command *command)
 {
-    return get_command_size (command->buffer);
+    return tpm2_header_get_size (command->buffer);
 }
 /**
  */
 TPMI_ST_COMMAND_TAG
 tpm2_command_get_tag (Tpm2Command *command)
 {
-    return get_command_tag (command->buffer);
+    return tpm2_header_get_tag (command->buffer);
 }
 /*
  * Return the Connection object associated with this Tpm2Command. This

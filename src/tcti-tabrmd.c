@@ -276,9 +276,9 @@ tss2_tcti_tabrmd_receive (TSS2_TCTI_CONTEXT *context,
         if (rc != TSS2_RC_SUCCESS)
             return rc;
         if (tabrmd_ctx->index == TPM_HEADER_SIZE) {
-            tabrmd_ctx->header.tag  = get_response_tag  (tabrmd_ctx->header_buf);
-            tabrmd_ctx->header.size = get_response_size (tabrmd_ctx->header_buf);
-            tabrmd_ctx->header.code = get_response_code (tabrmd_ctx->header_buf);
+            tabrmd_ctx->header.tag  = tpm2_header_get_tag  (tabrmd_ctx->header_buf);
+            tabrmd_ctx->header.size = tpm2_header_get_size (tabrmd_ctx->header_buf);
+            tabrmd_ctx->header.code = tpm2_header_get_response_code (tabrmd_ctx->header_buf);
             if (tabrmd_ctx->header.size < TPM_HEADER_SIZE) {
                 tabrmd_ctx->state = TABRMD_STATE_TRANSMIT;
                 return TSS2_TCTI_RC_MALFORMED_RESPONSE;

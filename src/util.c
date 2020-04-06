@@ -192,7 +192,7 @@ read_tpm_buffer (GInputStream             *istream,
     }
 
     /* Once we have the header we can get the size of the whole blob. */
-    size = get_command_size (buf);
+    size = tpm2_header_get_size (buf);
     /* If size from header is size of header, there's nothing more to read. */
     if (size == TPM_HEADER_SIZE) {
         return ret;
@@ -229,7 +229,7 @@ read_tpm_buffer_alloc (GInputStream *istream,
         ret = read_tpm_buffer (istream, &index, buf, size_tmp);
         switch (ret) {
         case EPROTO:
-            size_tmp = get_command_size (buf);
+            size_tmp = tpm2_header_get_size (buf);
             if (size_tmp < TPM_HEADER_SIZE || size_tmp > UTIL_BUF_MAX) {
                 g_warning ("%s: tpm buffer size is ouside of acceptable bounds: %zd",
                            __func__, size_tmp);

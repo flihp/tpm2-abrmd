@@ -83,7 +83,7 @@ tpm2_response_setup_with_handle (void **state)
                                         data->buffer,
                                         data->buffer_size,
                                         attributes);
-    set_response_size (data->buffer, data->buffer_size);
+    tpm2_header_set_size (data->buffer, data->buffer_size);
     data->buffer [TPM_RESPONSE_HEADER_SIZE]     = 0xde;
     data->buffer [TPM_RESPONSE_HEADER_SIZE + 1] = 0xad;
     data->buffer [TPM_RESPONSE_HEADER_SIZE + 2] = 0xbe;

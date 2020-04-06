@@ -195,7 +195,7 @@ command_source_on_input_ready (GInputStream *istream,
         goto fail_out;
     }
     attributes = command_attrs_from_cc (data->self->command_attrs,
-                                        get_command_code (buf));
+                                        tpm2_header_get_command_code (buf));
     command = tpm2_command_new (connection, buf, buf_size, attributes);
     if (command != NULL) {
         sink_enqueue (data->self->sink, G_OBJECT (command));
