@@ -398,7 +398,7 @@ test_tpm2_header_unit_LDADD = $(UNIT_LIBS)
 test_tpm2_header_unit_LDFLAGS = \
     -Wl,--wrap=Tss2_MU_TPM2_ST_Marshal,--wrap=Tss2_MU_TPM2_ST_Unmarshal \
     -Wl,--wrap=Tss2_MU_UINT32_Marshal,--wrap=Tss2_MU_UINT32_Unmarshal
-test_tpm2_header_unit_SOURCES = src/tpm2-header-gobject.c test/tpm2-header_unit.c
+test_tpm2_header_unit_SOURCES = test/tpm2-header_unit.c
 
 test_tpm2_response_unit_CFLAGS = $(UNIT_CFLAGS)
 test_tpm2_response_unit_LDADD = $(UNIT_LIBS)

@@ -10,8 +10,10 @@
 #include <setjmp.h>
 #include <cmocka.h>
 
-#include "tpm2-header-gobject.h"
+#include "tpm2-header.h"
 #include "util.h"
+
+#define RC_ERR TSS2_MU_RC_BAD_REFERENCE
 
 static void
 tpm2_header_type_test (void **state)
@@ -32,10 +34,12 @@ tpm2_header_from_buffer_tag_fail (void **state)
     UNUSED_PARAM (state);
     uint8_t buf [TPM_HEADER_SIZE] = { 0, };
     size_t size = sizeof (buf);
+    TSS2_RC rc;
 
-    will_return (__wrap_Tss2_MU_TPM2_ST_Unmarshal, TSS2_MU_RC_BAD_REFERENCE);
+    will_return (__wrap_Tss2_MU_TPM2_ST_Unmarshal, RC_ERR);
 
-    assert_null (tpm2_header_new_from_buffer (buf, size));
+    assert_null (tpm2_header_new_from_buffer (buf, size, &rc));
+    assert_int_equal (rc, RC_ERR);
 }
 
 static void
@@ -44,12 +48,14 @@ tpm2_header_from_buffer_size_fail (void **state)
     UNUSED_PARAM (state);
     uint8_t buf [TPM_HEADER_SIZE] = { 0, };
     size_t size = sizeof (buf);
+    TSS2_RC rc;
 
     will_return (__wrap_Tss2_MU_TPM2_ST_Unmarshal, TSS2_RC_SUCCESS);
     will_return (__wrap_Tss2_MU_TPM2_ST_Unmarshal, TPM2_ST_NO_SESSIONS);
-    will_return (__wrap_Tss2_MU_UINT32_Unmarshal, TSS2_MU_RC_BAD_REFERENCE);
+    will_return (__wrap_Tss2_MU_UINT32_Unmarshal, RC_ERR);
 
-    assert_null (tpm2_header_new_from_buffer (buf, size));
+    assert_null (tpm2_header_new_from_buffer (buf, size, &rc));
+    assert_int_equal (rc, RC_ERR);
 }
 
 static void
@@ -58,14 +64,16 @@ tpm2_header_from_buffer_code_fail (void **state)
     UNUSED_PARAM (state);
     uint8_t buf [TPM_HEADER_SIZE] = { 0, };
     size_t size = sizeof (buf);
+    TSS2_RC rc;
 
     will_return (__wrap_Tss2_MU_TPM2_ST_Unmarshal, TSS2_RC_SUCCESS);
     will_return (__wrap_Tss2_MU_TPM2_ST_Unmarshal, TPM2_ST_NO_SESSIONS);
     will_return (__wrap_Tss2_MU_UINT32_Unmarshal, TSS2_RC_SUCCESS);
     will_return (__wrap_Tss2_MU_UINT32_Unmarshal, 10);
-    will_return (__wrap_Tss2_MU_UINT32_Unmarshal, TSS2_MU_RC_BAD_REFERENCE);
+    will_return (__wrap_Tss2_MU_UINT32_Unmarshal, RC_ERR);
 
     assert_null (tpm2_header_new_from_buffer (buf, size));
+    assert_int_equal (rc, RC_ERR);
 }
 static void
 tpm2_header_from_buffer_success (void **state)
@@ -73,6 +81,7 @@ tpm2_header_from_buffer_success (void **state)
     UNUSED_PARAM (state);
     uint8_t buf [TPM_HEADER_SIZE] = { 0, };
     size_t size = sizeof (buf);
+    TSS2_RC rc;
 
     will_return (__wrap_Tss2_MU_TPM2_ST_Unmarshal, TSS2_RC_SUCCESS);
     will_return (__wrap_Tss2_MU_TPM2_ST_Unmarshal, TPM2_ST_NO_SESSIONS);
@@ -81,8 +90,9 @@ tpm2_header_from_buffer_success (void **state)
     will_return (__wrap_Tss2_MU_UINT32_Unmarshal, TSS2_RC_SUCCESS);
     will_return (__wrap_Tss2_MU_UINT32_Unmarshal, TPM2_CC_Startup);
 
-    Tpm2Header* hdr = tpm2_header_new_from_buffer (buf, size);
+    Tpm2Header* hdr = tpm2_header_new_from_buffer (buf, size, &rc);
     assert_non_null (hdr);
+    assert_int_equal (rc, TSS2_RC_SUCCESS);
     g_clear_object (&hdr);
 }
 static void
@@ -97,9 +107,9 @@ tpm2_header_marshal_tag_fail (void **state)
                                        10,
                                        TPM2_CC_Startup);
 
-    will_return (__wrap_Tss2_MU_TPM2_ST_Marshal, TSS2_MU_RC_BAD_REFERENCE);
+    will_return (__wrap_Tss2_MU_TPM2_ST_Marshal, RC_ERR);
     rc = tpm2_header_marshal (hdr, buf, size);
-    assert_int_equal (rc, TSS2_MU_RC_BAD_REFERENCE);
+    assert_int_equal (rc, RC_ERR);
     g_clear_object (&hdr);
 }
 static void
@@ -115,10 +125,10 @@ tpm2_header_marshal_size_fail (void **state)
                                        TPM2_CC_Startup);
 
     will_return (__wrap_Tss2_MU_TPM2_ST_Marshal, TSS2_RC_SUCCESS);
-    will_return (__wrap_Tss2_MU_UINT32_Marshal, TSS2_MU_RC_BAD_REFERENCE);
+    will_return (__wrap_Tss2_MU_UINT32_Marshal, RC_ERR);
 
     rc = tpm2_header_marshal (hdr, buf, size);
-    assert_int_equal (rc, TSS2_MU_RC_BAD_REFERENCE);
+    assert_int_equal (rc, RC_ERR);
     g_clear_object (&hdr);
 }
 static void
@@ -135,10 +145,10 @@ tpm2_header_marshal_code_fail (void **state)
 
     will_return (__wrap_Tss2_MU_TPM2_ST_Marshal, TSS2_RC_SUCCESS);
     will_return (__wrap_Tss2_MU_UINT32_Marshal, TSS2_RC_SUCCESS);
-    will_return (__wrap_Tss2_MU_UINT32_Marshal, TSS2_MU_RC_BAD_REFERENCE);
+    will_return (__wrap_Tss2_MU_UINT32_Marshal, RC_ERR);
 
     rc = tpm2_header_marshal (hdr, buf, size);
-    assert_int_equal (rc, TSS2_MU_RC_BAD_REFERENCE);
+    assert_int_equal (rc, RC_ERR);
     g_clear_object (&hdr);
 }
 static void

@@ -242,6 +242,7 @@ tss2_tcti_tabrmd_receive (TSS2_TCTI_CONTEXT *context,
 {
     TSS2_RC rc = TSS2_RC_SUCCESS;
     TSS2_TCTI_TABRMD_CONTEXT *tabrmd_ctx = (TSS2_TCTI_TABRMD_CONTEXT*)context;
+    Tpm2Header* hdr = NULL;
 
     g_debug ("tss2_tcti_tabrmd_receive");
     if (context == NULL || size == NULL) {
@@ -276,10 +277,13 @@ tss2_tcti_tabrmd_receive (TSS2_TCTI_CONTEXT *context,
         if (rc != TSS2_RC_SUCCESS)
             return rc;
         if (tabrmd_ctx->index == TPM_HEADER_SIZE) {
-            tabrmd_ctx->header.tag  = tpm2_header_get_tag  (tabrmd_ctx->header_buf);
-            tabrmd_ctx->header.size = tpm2_header_get_size (tabrmd_ctx->header_buf);
-            tabrmd_ctx->header.code = tpm2_header_get_response_code (tabrmd_ctx->header_buf);
-            if (tabrmd_ctx->header.size < TPM_HEADER_SIZE) {
+            hdr = tpm2_header_new_from_buffer (tabrmd_ctx->header_buf,
+                                               TPM_HEADER_SIZE,
+                                               &rc);
+            if (!hdr) {
+                return rc;
+            }
+            if (tpm2_header_get_size (hdr) < TPM_HEADER_SIZE) {
                 tabrmd_ctx->state = TABRMD_STATE_TRANSMIT;
                 return TSS2_TCTI_RC_MALFORMED_RESPONSE;
             }
@@ -287,22 +291,24 @@ tss2_tcti_tabrmd_receive (TSS2_TCTI_CONTEXT *context,
     }
     /* if response is NULL, caller is querying size, we know size isn't NULL */
     if (response == NULL) {
-        *size = tabrmd_ctx->header.size;
+        *size = tpm2_header_get_size (hdr);
+        g_clear_object (&hdr);
         return TSS2_RC_SUCCESS;
     } else if (tabrmd_ctx->index == TPM_HEADER_SIZE) {
         /* once we have the header and a buffer from the caller, copy */
         memcpy (response, tabrmd_ctx->header_buf, TPM_HEADER_SIZE);
     }
-    if (*size < tabrmd_ctx->header.size) {
+    if (*size < tpm2_header_get_size (hdr)) {
+        g_clear_object (&hdr);
         return TSS2_TCTI_RC_INSUFFICIENT_BUFFER;
     }
     /* the whole response has been read already */
-    if (tabrmd_ctx->header.size == tabrmd_ctx->index) {
+    if (tabrmd_ctx->index == tpm2_header_get_size (hdr)) {
         goto out;
     }
     rc = tcti_tabrmd_read (tabrmd_ctx,
                            response,
-                           tabrmd_ctx->header.size - tabrmd_ctx->index,
+                           tpm2_header_get_size (hdr) - tabrmd_ctx->index,
                            timeout);
 out:
     if (rc == TSS2_RC_SUCCESS) {
@@ -310,6 +316,7 @@ out:
         *size = tabrmd_ctx->index;
         tabrmd_ctx->index = 0;
         tabrmd_ctx->state = TABRMD_STATE_TRANSMIT;
+        g_clear_object (&hdr);
     }
     return rc;
 }

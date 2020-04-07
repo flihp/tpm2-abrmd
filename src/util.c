@@ -121,6 +121,7 @@ int
 read_data (GInputStream  *istream,
            size_t        *index,
            uint8_t       *buf,
+           size_t 
            size_t         count)
 {
     ssize_t num_read = 0;
@@ -129,6 +130,11 @@ read_data (GInputStream  *istream,
     GError *error = NULL;
 
     g_assert (index != NULL);
+    if ((*index > buf_size) || (buf_size - *index < bytes_left)) {
+        g_warning ("%s: invalid index or buffer size\n", __func__);
+        return EPROTO;
+    }
+
     do {
         g_debug ("%s: reading %zu bytes from istream", __func__,  bytes_left);
         num_read = g_input_stream_read (istream,
@@ -169,6 +175,24 @@ read_data (GInputStream  *istream,
  *   errno: In the event of an error from the underlying 'read' syscall.
  *   EPROTO: If buf_size is less than the size from the command buffer.
  */
+int
+read_tpm_header (GInputStream* istream,
+                 size_t* index,
+                 uint8_t* buf,
+                 size_t buf_size)
+{
+    assert (index);
+    assert (istream);
+    assert (buf);
+
+    if ((*index > buf_size) || (buf_size - *index < TPM_HEADER_SIZE)) {
+        g_warning ("%s: invalid index or buffer size\n", __func__);
+        return EPROTO;
+    }
+
+    return read_data (istream, index, buf, TPM_HEADER_SIZE);
+}
+
 int
 read_tpm_buffer (GInputStream             *istream,
                  size_t                   *index,

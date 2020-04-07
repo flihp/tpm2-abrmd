@@ -86,7 +86,6 @@ typedef struct {
     guint64                        id;
     GSocketConnection             *sock_connect;
     TctiTabrmd                    *proxy;
-    tpm2_header_t                  header;
     tcti_tabrmd_state_t            state;
     size_t                         index;
     uint8_t                        header_buf [TPM_HEADER_SIZE];
