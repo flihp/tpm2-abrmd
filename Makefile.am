@@ -274,6 +274,8 @@ test_integration_libtest_la_SOURCES = \
     test/mock-funcs.h \
     test/mock-io-stream.c \
     test/mock-io-stream.h \
+    test/mock-mu.c \
+    test/mock-mu.h \
     test/tcti-mock.c \
     test/tcti-mock.h
 
@@ -393,6 +395,9 @@ test_tpm2_command_unit_SOURCES = test/tpm2-command_unit.c
 
 test_tpm2_header_unit_CFLAGS = $(UNIT_CFLAGS)
 test_tpm2_header_unit_LDADD = $(UNIT_LIBS)
+test_tpm2_header_unit_LDFLAGS = \
+    -Wl,--wrap=Tss2_MU_TPM2_ST_Marshal,--wrap=Tss2_MU_TPM2_ST_Unmarshal \
+    -Wl,--wrap=Tss2_MU_UINT32_Marshal,--wrap=Tss2_MU_UINT32_Unmarshal
 test_tpm2_header_unit_SOURCES = src/tpm2-header-gobject.c test/tpm2-header_unit.c
 
 test_tpm2_response_unit_CFLAGS = $(UNIT_CFLAGS)

@@ -1,8 +1,4 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
-/*
- * Copyright (c) 2017 - 2018, Intel Corporation
- * All rights reserved.
- */
 #include <assert.h>
 #include <glib-object.h>
 
@@ -122,7 +118,7 @@ tpm2_header_class_init (Tpm2HeaderClass *klass)
                            max_size,
                            G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY);
     obj_properties [PROP_CODE] =
-        g_param_spec_uint ("size",
+        g_param_spec_uint ("code",
                            "UINT32",
                            "TPM command / response code",
                            0,
@@ -176,6 +172,34 @@ tpm2_header_new_from_buffer (uint8_t* buf, size_t buf_size)
     }
 
     return tpm2_header_new (tag, size, code);
+}
+TSS2_RC
+tpm2_header_marshal (Tpm2Header* hdr, uint8_t* buf, size_t size)
+{
+    assert (buf != NULL);
+    assert (size >= TPM_HEADER_SIZE);
+
+    size_t offset = 0;
+    TSS2_RC rc;
+
+    rc = Tss2_MU_TPM2_ST_Marshal (hdr->tag, buf, size, &offset);
+    if (rc) {
+        RC_WARN ("Tss2_MU_TPM2_ST_Marshal", rc);
+        return rc;
+    }
+
+    rc = Tss2_MU_UINT32_Marshal (hdr->size, buf, size, &offset);
+    if (rc) {
+        RC_WARN ("Tss2_MU_UINT32_Marshal", rc);
+        return rc;
+    }
+
+    rc = Tss2_MU_UINT32_Marshal (hdr->code, buf, size, &offset);
+    if (rc) {
+        RC_WARN ("Tss2_MU_UINT32_Marshal", rc);
+    }
+
+    return rc;
 }
 TPM2_ST
 tpm2_header_get_tag (Tpm2Header* hdr)

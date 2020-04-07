@@ -1,8 +1,4 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
-/*
- * Copyright (c) 2017 - 2018, Intel Corporation
- * All rights reserved.
- */
 #ifndef TPM2_HEADER_H
 #define TPM2_HEADER_H
 
@@ -37,6 +33,7 @@ Tpm2Header* tpm2_header_new (TPM2_ST tag, UINT32 size, UINT32 code);
 /* may return NULL if buffer fails to parse
  * buf / size *must* be at least TPM_HEADER_SIZE */
 Tpm2Header* tpm2_header_new_from_buffer (uint8_t* buf, size_t size);
+TSS2_RC tpm2_header_marshal (Tpm2Header* hdr, uint8_t* buf, size_t size);
 
 TPM2_ST tpm2_header_get_tag (Tpm2Header* hdr);
 UINT32 tpm2_header_get_size (Tpm2Header* hdr);
