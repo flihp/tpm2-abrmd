@@ -12,6 +12,7 @@
 #include <tss2/tss2_rc.h>
 #include <tss2/tss2_tpm2_types.h>
 
+#include "connection.h"
 #include "control-message.h"
 
 /* Use to suppress "unused parameter" warnings: */
@@ -82,21 +83,17 @@ typedef TSS2_RC (*KeyValueFunc) (const key_value_t* key_value,
 ssize_t     write_all                       (GOutputStream    *ostream,
                                              const uint8_t    *buf,
                                              const size_t      size);
-int         read_data                       (GInputStream     *istream,
-                                             size_t           *index,
+int         read_tpm_buffer                 (GSocketConnection *socket_con,
                                              uint8_t          *buf,
-                                             size_t            count);
-int         read_tpm_buffer                 (GInputStream     *istream,
-                                             size_t           *index,
-                                             uint8_t          *buf,
-                                             size_t            buf_size);
-uint8_t*    read_tpm_buffer_alloc           (GInputStream     *istream,
+                                             size_t            buf_size,
+                                             size_t           *index);
+uint8_t*    read_tpm_buffer_alloc           (Connection *connection,
                                              size_t           *buf_size);
 void        g_debug_bytes                   (uint8_t const    *byte_array,
                                              size_t            array_size,
                                              size_t            width,
                                              size_t            indent);
-GIOStream*  create_connection_iostream      (int              *client_fd);
+GSocketConnection* create_socket_connection (int *client_fd);
 int         create_socket_pair              (int              *fd_a,
                                              int              *fd_b,
                                              int               flags);
@@ -104,5 +101,15 @@ void        g_debug_tpma_cc                 (TPMA_CC           tpma_cc);
 TSS2_RC     parse_key_value_string (char *kv_str,
                                     KeyValueFunc callback,
                                     gpointer user_data);
+
+TSS2_RC gerror_code_to_tcti_rc (int error_number);
+int poll_fd (int fd,
+             int32_t timeout);
+TSS2_RC errno_to_tcti_rc (int error_number);
+TSS2_RC read_with_timeout (GSocketConnection *connection,
+                           uint8_t *buf,
+                           size_t size,
+                           size_t *index,
+                           int32_t timeout);
 
 #endif /* UTIL_H */

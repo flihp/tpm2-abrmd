@@ -344,7 +344,7 @@ on_handle_create_connection (TctiTabrmd            *skeleton,
     HandleMap   *handle_map = NULL;
     Connection *connection = NULL;
     gint client_fd = 0, ret = 0;
-    GIOStream *iostream;
+    GSocketConnection *sock_con;
     GVariant *response_variants[2], *response_tuple;
     GUnixFDList *fd_list = NULL;
     guint64 id = 0, id_pid_mix = 0;
@@ -382,10 +382,10 @@ on_handle_create_connection (TctiTabrmd            *skeleton,
     handle_map = handle_map_new (TPM2_HT_TRANSIENT, self->max_transient_objects);
     if (handle_map == NULL)
         g_error ("Failed to allocate new HandleMap");
-    iostream = create_connection_iostream (&client_fd);
-    connection = connection_new (iostream, id_pid_mix, handle_map);
+    sock_con = create_socket_connection (&client_fd);
+    connection = connection_new (sock_con, id_pid_mix, handle_map);
     g_object_unref (handle_map);
-    g_object_unref (iostream);
+    g_object_unref (sock_con);
     if (connection == NULL)
         g_error ("Failed to allocate new connection.");
     g_debug ("Created connection with client FD: %d and id: 0x%" PRIx64,

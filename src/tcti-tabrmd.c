@@ -69,167 +69,7 @@ tss2_tcti_tabrmd_transmit (TSS2_TCTI_CONTEXT *context,
     }
     return tss2_ret;
 }
-/*
- * This function maps errno values to TCTI RCs.
- */
-static TSS2_RC
-errno_to_tcti_rc (int error_number)
-{
-    switch (error_number) {
-    case -1:
-        return TSS2_TCTI_RC_NO_CONNECTION;
-    case 0:
-        return TSS2_RC_SUCCESS;
-    case EAGAIN:
-#if EAGAIN != EWOULDBLOCK
-    case EWOULDBLOCK:
-#endif
-        return TSS2_TCTI_RC_TRY_AGAIN;
-    case EIO:
-        return TSS2_TCTI_RC_IO_ERROR;
-    default:
-        g_debug ("mapping errno %d with message \"%s\" to "
-                 "TSS2_TCTI_RC_GENERAL_FAILURE",
-                 error_number, strerror (error_number));
-        return TSS2_TCTI_RC_GENERAL_FAILURE;
-    }
-}
-/*
- * This function maps GError code values to TCTI RCs.
- */
-static TSS2_RC
-gerror_code_to_tcti_rc (int error_number)
-{
-    switch (error_number) {
-    case -1:
-        return TSS2_TCTI_RC_NO_CONNECTION;
-    case G_IO_ERROR_WOULD_BLOCK:
-        return TSS2_TCTI_RC_TRY_AGAIN;
-    case G_IO_ERROR_FAILED:
-    case G_IO_ERROR_HOST_UNREACHABLE:
-    case G_IO_ERROR_NETWORK_UNREACHABLE:
-#if G_IO_ERROR_BROKEN_PIPE != G_IO_ERROR_CONNECTION_CLOSED
-    case G_IO_ERROR_CONNECTION_CLOSED:
-#endif
-#if GLIB_MAJOR_VERSION == 2 && GLIB_MINOR_VERSION >= 44
-    case G_IO_ERROR_NOT_CONNECTED:
-#endif
-        return TSS2_TCTI_RC_IO_ERROR;
-    default:
-        g_debug ("mapping errno %d with message \"%s\" to "
-                 "TSS2_TCTI_RC_GENERAL_FAILURE",
-                 error_number, strerror (error_number));
-        return TSS2_TCTI_RC_GENERAL_FAILURE;
-    }
-}
 
-#if defined(__FreeBSD__)
-#ifndef POLLRDHUP
-#define POLLRDHUP 0x0
-#endif
-#endif
-/*
- * This is a thin wrapper around a call to poll. It packages up the provided
- * file descriptor and timeout and polls on that same FD for data or a hangup.
- * Returns:
- *   -1 on timeout
- *   0 when data is ready
- *   errno on error
- */
-int
-tcti_tabrmd_poll (int        fd,
-                  int32_t    timeout)
-{
-    struct pollfd pollfds [] = {
-        {
-            .fd = fd,
-             .events = POLLIN | POLLPRI | POLLRDHUP,
-        }
-    };
-    int ret;
-    int errno_tmp;
-
-    ret = TABRMD_ERRNO_EINTR_RETRY (poll (pollfds,
-                                    sizeof (pollfds) / sizeof (struct pollfd),
-                                    timeout));
-    errno_tmp = errno;
-    switch (ret) {
-    case -1:
-        g_debug ("poll produced error: %d, %s",
-                 errno_tmp, strerror (errno_tmp));
-        return errno_tmp;
-    case 0:
-        g_debug ("poll timed out after %" PRId32 " milliseconds", timeout);
-        return -1;
-    default:
-        g_debug ("poll has %d fds ready", ret);
-        if (pollfds[0].revents & POLLIN) {
-            g_debug ("  POLLIN");
-        }
-        if (pollfds[0].revents & POLLPRI) {
-            g_debug ("  POLLPRI");
-        }
-        if (pollfds[0].revents & POLLRDHUP) {
-            g_debug ("  POLLRDHUP");
-        }
-        return 0;
-    }
-}
-/*
- * Read as much of the requested data as possible into the provided buffer.
- * If the read would block, return TSS2_TCTI_RC_TRY_AGAIN (a short read will
- * write data into the buffer first).
- * If an error occurs map that to the appropriate TSS2_RC and return.
- */
-TSS2_RC
-tcti_tabrmd_read (TSS2_TCTI_TABRMD_CONTEXT *ctx,
-                  uint8_t *buf,
-                  size_t size,
-                  int32_t timeout)
-{
-    GError *error;
-    ssize_t num_read;
-    int ret;
-
-    ret = tcti_tabrmd_poll (TSS2_TCTI_TABRMD_FD (ctx), timeout);
-    switch (ret) {
-    case -1:
-        return TSS2_TCTI_RC_TRY_AGAIN;
-    case 0:
-        break;
-    default:
-        return errno_to_tcti_rc (ret);
-    }
-
-    num_read = g_input_stream_read (TSS2_TCTI_TABRMD_ISTREAM (ctx),
-                                    (gchar*)&buf [ctx->index],
-                                    size,
-                                    NULL,
-                                    &error);
-    switch (num_read) {
-    case 0:
-        g_debug ("read produced EOF");
-        return TSS2_TCTI_RC_NO_CONNECTION;
-    case -1:
-        g_assert (error != NULL);
-        g_warning ("%s: read on istream produced error: %s", __func__,
-                   error->message);
-        ret = error->code;
-        g_error_free (error);
-        return gerror_code_to_tcti_rc (ret);
-    default:
-        g_debug ("successfully read %zd bytes", num_read);
-        g_debug_bytes (&buf [ctx->index], num_read, 16, 4);
-        /* Advance index by the number of bytes read. */
-        ctx->index += num_read;
-        /* short read means try again */
-        if (size - num_read != 0) {
-            return TSS2_TCTI_RC_TRY_AGAIN;
-        } else {
-            return TSS2_RC_SUCCESS;
-        }
-    }
-}
 /*
  * This is the receive function that is exposed to clients through the TCTI
  * API.
@@ -269,10 +109,11 @@ tss2_tcti_tabrmd_receive (TSS2_TCTI_CONTEXT *context,
     }
     /* make sure we've got the response header */
     if (tabrmd_ctx->index < TPM_HEADER_SIZE) {
-        rc = tcti_tabrmd_read (tabrmd_ctx,
-                               tabrmd_ctx->header_buf,
-                               TPM_HEADER_SIZE - tabrmd_ctx->index,
-                               timeout);
+        rc = read_with_timeout (tabrmd_ctx->sock_connect,
+                                tabrmd_ctx->header_buf,
+                                TPM_HEADER_SIZE - tabrmd_ctx->index,
+                                &tabrmd_ctx->index,
+                                timeout);
         if (rc != TSS2_RC_SUCCESS)
             return rc;
         if (tabrmd_ctx->index == TPM_HEADER_SIZE) {
@@ -300,10 +141,11 @@ tss2_tcti_tabrmd_receive (TSS2_TCTI_CONTEXT *context,
     if (tabrmd_ctx->header.size == tabrmd_ctx->index) {
         goto out;
     }
-    rc = tcti_tabrmd_read (tabrmd_ctx,
-                           response,
-                           tabrmd_ctx->header.size - tabrmd_ctx->index,
-                           timeout);
+    rc = read_with_timeout (tabrmd_ctx->sock_connect,
+                            response,
+                            tabrmd_ctx->header.size - tabrmd_ctx->index,
+                            &tabrmd_ctx->index,
+                            timeout);
 out:
     if (rc == TSS2_RC_SUCCESS) {
         /* We got all the bytes we asked for, reset the index & state: done */

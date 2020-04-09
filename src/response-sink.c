@@ -183,8 +183,7 @@ response_sink_process_response (Tpm2Response *response)
     guint32      size    = tpm2_response_get_size (response);
     guint8      *buffer  = tpm2_response_get_buffer (response);
     Connection  *connection = tpm2_response_get_connection (response);
-    GIOStream   *iostream = connection_get_iostream (connection);
-    GOutputStream *ostream = g_io_stream_get_output_stream (iostream);
+    GOutputStream *ostream = connection_get_ostream (connection);
 
     g_debug ("%s: writing 0x%x bytes", __func__, size);
     g_debug_bytes (buffer, size, 16, 4);

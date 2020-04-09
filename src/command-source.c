@@ -190,7 +190,8 @@ command_source_on_input_ready (GInputStream *istream,
         g_error ("%s: failed to get connection associated with istream",
                  __func__);
     }
-    buf = read_tpm_buffer_alloc (istream, &buf_size);
+    /* pass whole connection object in? */
+    buf = read_tpm_buffer_alloc (connection, &buf_size);
     if (buf == NULL) {
         goto fail_out;
     }
@@ -239,7 +240,6 @@ command_source_on_new_connection (ConnectionManager   *connection_manager,
                                   Connection          *connection,
                                   CommandSource       *self)
 {
-    GIOStream *iostream;
     GPollableInputStream *istream;
     source_data_t *data;
     UNUSED_PARAM(connection_manager);
@@ -249,8 +249,7 @@ command_source_on_new_connection (ConnectionManager   *connection_manager,
      * Take reference to socket, will be freed when the source_data_t
      * structure is freed
      */
-    iostream = connection_get_iostream (connection);
-    istream = G_POLLABLE_INPUT_STREAM (g_io_stream_get_input_stream (iostream));
+    istream = G_POLLABLE_INPUT_STREAM (connection_get_istream (connection));
     g_object_ref (istream);
     data = g_malloc0 (sizeof (source_data_t));
     data->cancellable = g_cancellable_new ();
