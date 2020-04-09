@@ -20,7 +20,7 @@ typedef struct _ConnectionClass {
 
 typedef struct _Connection {
     GObject             parent_instance;
-    GIOStream          *iostream;
+    GSocketConnection  *sock_con;
     guint64             id;
     HandleMap          *transient_handle_map;
 } Connection;
@@ -33,11 +33,14 @@ typedef struct _Connection {
 #define CONNECTION_GET_CLASS(obj)    (G_TYPE_INSTANCE_GET_CLASS ((obj),  TYPE_CONNECTION, ConnectionClass))
 
 GType            connection_get_type     (void);
-Connection*      connection_new          (GIOStream       *iostream,
+Connection*      connection_new          (GSocketConnection *sock_con,
                                           guint64          id,
                                           HandleMap       *transient_handle_map);
+GSocketConnection* connection_get_sockcon (Connection *connection);
 gpointer         connection_key_istream  (Connection      *session);
 gpointer         connection_key_id       (Connection      *session);
 GIOStream*       connection_get_iostream (Connection      *connection);
+GInputStream*    connection_get_istream (Connection *connection);
+GOutputStream*   connection_get_ostream (Connection *connection);
 HandleMap*       connection_get_trans_map(Connection      *session);
 #endif /* CONNECTION_H */

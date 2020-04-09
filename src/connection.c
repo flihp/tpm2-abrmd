@@ -19,7 +19,7 @@ G_DEFINE_TYPE (Connection, connection, G_TYPE_OBJECT);
 enum {
     PROP_0,
     PROP_ID,
-    PROP_IO_STREAM,
+    PROP_SOCKET_CONNECTION,
     PROP_TRANSIENT_HANDLE_MAP,
     N_PROPERTIES
 };
@@ -39,9 +39,9 @@ connection_set_property (GObject       *object,
         self->id = g_value_get_uint64 (value);
         g_debug ("%s: set id to 0x%" PRIx64, __func__, self->id);
         break;
-    case PROP_IO_STREAM:
-        self->iostream = G_IO_STREAM (g_value_dup_object (value));
-        g_debug ("%s: set socket", __func__);
+    case PROP_SOCKET_CONNECTION:
+        self->sock_con = G_SOCKET_CONNECTION (g_value_dup_object (value));
+        g_debug ("%s: set socket connection", __func__);
         break;
     case PROP_TRANSIENT_HANDLE_MAP:
         self->transient_handle_map = g_value_get_object (value);
@@ -66,8 +66,8 @@ connection_get_property (GObject     *object,
     case PROP_ID:
         g_value_set_uint64 (value, self->id);
         break;
-    case PROP_IO_STREAM:
-        g_value_set_object (value, self->iostream);
+    case PROP_SOCKET_CONNECTION:
+        g_value_set_object (value, self->sock_con);
         break;
     case PROP_TRANSIENT_HANDLE_MAP:
         g_value_set_object (value, self->transient_handle_map);
@@ -93,7 +93,7 @@ connection_dispose (GObject *obj)
 {
     Connection *connection = CONNECTION (obj);
 
-    g_clear_object (&connection->iostream);
+    g_clear_object (&connection->sock_con);
     g_object_unref (connection->transient_handle_map);
 
     G_OBJECT_CLASS (connection_parent_class)->dispose (obj);
@@ -120,11 +120,11 @@ connection_class_init (ConnectionClass *klass)
                              UINT64_MAX,
                              0,
                              G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY);
-    obj_properties [PROP_IO_STREAM] =
-        g_param_spec_object ("iostream",
-                             "GIOStream",
-                             "Reference to GIOStream for exchanging data with client",
-                             G_TYPE_IO_STREAM,
+    obj_properties [PROP_SOCKET_CONNECTION] =
+        g_param_spec_object ("socket_connection",
+                             "GSocketConnection",
+                             "Reference to GSocketConnection for exchanging data with client",
+                             G_TYPE_SOCKET_CONNECTION,
                              G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY);
     obj_properties [PROP_TRANSIENT_HANDLE_MAP] =
         g_param_spec_object ("transient-handle-map",
@@ -142,13 +142,13 @@ connection_class_init (ConnectionClass *klass)
  * respectively.
  */
 Connection*
-connection_new (GIOStream  *iostream,
+connection_new (GSocketConnection  *sock_con,
                 guint64     id,
                 HandleMap  *transient_handle_map)
 {
     return CONNECTION (g_object_new (TYPE_CONNECTION,
                                      "id", id,
-                                     "iostream", iostream,
+                                     "socket-connection", sock_con,
                                      "transient-handle-map", transient_handle_map,
                                      NULL));
 }
@@ -156,19 +156,33 @@ connection_new (GIOStream  *iostream,
 gpointer
 connection_key_istream (Connection *connection)
 {
-    return g_io_stream_get_input_stream (connection->iostream);
+    return connection_get_istream (connection);
 }
-
-GIOStream*
-connection_get_iostream (Connection *connection)
-{
-    return connection->iostream;
-}
-
 gpointer
 connection_key_id (Connection *connection)
 {
     return &connection->id;
+}
+GSocketConnection*
+connection_get_sockcon (Connection *connection)
+{
+    return connection->sock_con;
+}
+GIOStream*
+connection_get_iostream (Connection *connection)
+{
+    return G_IO_STREAM (connection_get_sockcon (connection));
+}
+
+GInputStream*
+connection_get_istream (Connection *connection)
+{
+    return g_io_stream_get_input_stream (connection_get_iostream (connection));
+}
+GOutputStream*
+connection_get_ostream (Connection *connection)
+{
+    return g_io_stream_get_output_stream (connection_get_iostream (connection));
 }
 /*
  * Return a reference to the HandleMap for transient handles to the caller.
