@@ -113,7 +113,7 @@ static int
 resource_manager_setup (void **state)
 {
     test_data_t *data;
-    GIOStream   *iostream;
+    GSocketConnection *sock_con;
     HandleMap   *handle_map;
     SessionList *session_list;
     Tcti *tcti = NULL;
@@ -131,10 +131,10 @@ resource_manager_setup (void **state)
     data->resource_manager = resource_manager_new (data->tpm2,
                                                    session_list);
     g_clear_object (&session_list);
-    iostream = create_connection_iostream (&data->client_fd);
-    data->connection = connection_new (iostream, 10, handle_map);
+    sock_con = create_socket_connection (&data->client_fd);
+    data->connection = connection_new (sock_con, 10, handle_map);
     g_object_unref (handle_map);
-    g_object_unref (iostream);
+    g_object_unref (sock_con);
 
     *state = data;
     return 0;

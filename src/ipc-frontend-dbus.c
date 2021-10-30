@@ -322,7 +322,7 @@ on_handle_create_connection (TctiTabrmd            *skeleton,
     HandleMap   *handle_map = NULL;
     Connection *connection = NULL;
     gint client_fd = 0, ret = 0;
-    GIOStream *iostream;
+    GSocketConnection *sock_con;
     GVariant *response, *response_tuple;
     GUnixFDList *fd_list = NULL;
     guint64 id = 0, id_pid_mix = 0;

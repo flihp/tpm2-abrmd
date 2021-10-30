@@ -219,17 +219,17 @@ command_source_connection_insert_test (void **state)
     struct source_test_data *data = (struct source_test_data*)*state;
     source_data_t *source_data;
     CommandSource *source = data->source;
-    GIOStream     *iostream;
+    GSocketConnection *sock_con;
     HandleMap     *handle_map;
     Connection *connection;
     gint ret, client_fd;
 
     g_debug ("%s", __func__);
     handle_map = handle_map_new (TPM2_HT_TRANSIENT, MAX_ENTRIES_DEFAULT);
-    iostream = create_connection_iostream (&client_fd);
-    connection = connection_new (iostream, 5, handle_map);
+    sock_con = create_socket_connection (&client_fd);
+    connection = connection_new (sock_con, 5, handle_map);
     g_object_unref (handle_map);
-    g_object_unref (iostream);
+    g_object_unref (sock_con);
     /* starts the main loop in the CommandSource */
     ret = thread_start(THREAD (source));
     will_return (__wrap_g_source_set_callback, &source_data);
@@ -266,7 +266,7 @@ static void
 command_source_on_io_ready_success_test (void **state)
 {
     struct source_test_data *data = (struct source_test_data*)*state;
-    GIOStream   *iostream;
+    GSocketConnection *sock_con;
     HandleMap   *handle_map;
     Connection *connection;
     Tpm2Command *command_out;
@@ -277,10 +277,10 @@ command_source_on_io_ready_success_test (void **state)
                           0x0,  0x0,  0x0,  0x7f, 0x0a };
 
     handle_map = handle_map_new (TPM2_HT_TRANSIENT, MAX_ENTRIES_DEFAULT);
-    iostream = create_connection_iostream (&client_fd);
-    connection = connection_new (iostream, 0, handle_map);
+    sock_con = create_socket_connection (&client_fd);
+    connection = connection_new (sock_con, 0, handle_map);
     g_object_unref (handle_map);
-    g_object_unref (iostream);
+    g_object_unref (sock_con);
         /* prime wraps */
     will_return (__wrap_connection_manager_lookup_istream, connection);
 
@@ -312,7 +312,7 @@ command_source_on_io_ready_eof_test (void **state)
 {
     struct source_test_data *data = (struct source_test_data*)*state;
     source_data_t *source_data;
-    GIOStream   *iostream;
+    GSocketConnection *sock_con;
     HandleMap   *handle_map;
     Connection *connection;
     ControlMessage *msg;
@@ -320,10 +320,10 @@ command_source_on_io_ready_eof_test (void **state)
     gboolean ret;
 
     handle_map = handle_map_new (TPM2_HT_TRANSIENT, MAX_ENTRIES_DEFAULT);
-    iostream = create_connection_iostream (&client_fd);
-    connection = connection_new (iostream, 0, handle_map);
+    sock_con = create_socket_connection (&client_fd);
+    connection = connection_new (sock_con, 0, handle_map);
     g_object_unref (handle_map);
-    g_object_unref (iostream);
+    g_object_unref (sock_con);
         /* prime wraps */
     will_return (__wrap_g_source_set_callback, &source_data);
     will_return (__wrap_connection_manager_lookup_istream, connection);
@@ -333,7 +333,7 @@ command_source_on_io_ready_eof_test (void **state)
     will_return (__wrap_connection_manager_remove, TRUE);
 
     command_source_on_new_connection (data->manager, connection, data->source);
-    ret = command_source_on_input_ready (g_io_stream_get_input_stream (connection->iostream), source_data);
+    ret = command_source_on_input_ready (connection_get_istream (connection), source_data);
     assert_int_equal (ret, G_SOURCE_REMOVE);
     hash_table_size = g_hash_table_size (data->source->istream_to_source_data_map);
     assert_int_equal (hash_table_size, 0);
