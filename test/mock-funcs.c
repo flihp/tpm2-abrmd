@@ -114,3 +114,16 @@ __wrap_g_input_stream_read (GInputStream *stream,
         return resp_size;
     }
 }
+GTypeInstance*
+__real_g_type_check_instance_cast (GTypeInstance *type_instance,
+                                    GType          iface_type);
+GTypeInstance*
+__wrap_g_type_check_instance_cast (GTypeInstance *type_instance,
+                                    GType          iface_type)
+{
+    if (type_instance != (GTypeInstance*)TEST_CONNECTION) {
+        return __real_g_type_check_instance_cast (type_instance, iface_type);
+    } else {
+        return type_instance;
+    }
+}

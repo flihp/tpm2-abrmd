@@ -399,7 +399,7 @@ test_tpm2_response_unit_SOURCES = test/tpm2-response_unit.c
 
 test_util_unit_CFLAGS = $(UNIT_CFLAGS)
 test_util_unit_LDADD = $(UNIT_LIBS)
-test_util_unit_LDFLAGS = -Wl,--wrap=g_input_stream_read,--wrap=g_output_stream_write
+test_util_unit_LDFLAGS = -Wl,--wrap=g_input_stream_read,--wrap=g_output_stream_write,--wrap=poll,--wrap=g_socket_connection_get_socket,--wrap=g_socket_get_fd,--wrap=g_io_stream_get_input_stream,--wrap=g_type_check_instance_cast
 test_util_unit_SOURCES = test/util_unit.c
 
 test_message_queue_unit_CFLAGS = $(UNIT_CFLAGS)

@@ -28,34 +28,29 @@ typedef struct test_data {
     SessionList *session_list;
 } test_data_t;
 
-static GIOStream*
-test_iostream_new (void)
-{
-    GInputStream *input;
-    GOutputStream *output;
-    GIOStream *iostream;
-    int fds[2];
-
-    socketpair (AF_LOCAL, SOCK_STREAM, 0, fds);
-    input = g_unix_input_stream_new (fds[0], TRUE);
-    output = g_unix_output_stream_new (fds[1], TRUE);
-    iostream = mock_io_stream_new (input, output);
-    g_object_unref (input);
-    g_object_unref (output);
-    return iostream;
-}
 static Connection*
-test_connection_new (guint64 id)
+test_connection_new (guint64 id,
+                     GSocketConnection **cli)
 {
     Connection *conn = NULL;
-    GIOStream *iostream = NULL;
+    GSocket *socket_cli = NULL, *socket_srv = NULL;
+    GSocketConnection *socketcon_srv = NULL;
     HandleMap *handle_map = NULL;
+    int fds[2] = { 0 };
 
-    iostream = test_iostream_new ();
+    socketpair (AF_LOCAL, SOCK_STREAM, 0, fds);
+
+    socket_cli = g_socket_new_from_fd (fds[1], NULL);
+    *cli = g_socket_connection_factory_create_connection (socket_cli);
+    g_clear_object (&socket_cli);
+
+    socket_srv = g_socket_new_from_fd (fds[0], NULL);
+    socketcon_srv = g_socket_connection_factory_create_connection (socket_srv);
+    g_clear_object (&socket_srv);
+
     handle_map = handle_map_new (TPM2_HT_TRANSIENT, MAX_ENTRIES_DEFAULT);
-    conn = connection_new (iostream, id, handle_map);
-
-    g_clear_object (&iostream);
+    conn = connection_new (socketcon_srv, id, handle_map);
+    g_clear_object (&socketcon_srv);
     g_clear_object (&handle_map);
 
     return conn;
@@ -112,10 +107,12 @@ static void
 session_list_insert_test (void **state)
 {
     test_data_t *data = (test_data_t*)*state;
+    GSocketConnection *cli = NULL;
     Connection *conn = NULL;
     SessionEntry *entry = NULL;
 
-    conn = test_connection_new (INSERT_TEST_ID);
+    conn = test_connection_new (INSERT_TEST_ID, &cli);
+    g_clear_object (&cli);
     entry = session_entry_new (conn, INSERT_TEST_HANDLE);
     assert_true (session_list_insert (data->session_list, entry));
     g_clear_object (&conn);
@@ -133,10 +130,12 @@ static void
 session_list_size_three_test (void **state)
 {
     test_data_t *data = (test_data_t*)*state;
+    GSocketConnection *cli = NULL;
     Connection *conn = NULL;
     SessionEntry *entry = NULL;
 
-    conn = test_connection_new (SIZE_TEST_ID);
+    conn = test_connection_new (SIZE_TEST_ID, &cli);
+    g_clear_object (&cli);
     entry = session_entry_new (conn, SIZE_TEST_HANDLE_1);
     session_list_insert (data->session_list, entry);
     g_clear_object (&entry);
@@ -205,17 +204,20 @@ static void
 session_list_abandon_handle_bad_connection_test (void **state)
 {
     test_data_t *data = (test_data_t*)*state;
+    GSocketConnection *cli = NULL;
     Connection *conn = NULL;
     SessionEntry *entry = NULL;
     gboolean ret;
 
-    conn = test_connection_new (ABANDON_HANDLE_ID);
+    conn = test_connection_new (ABANDON_HANDLE_ID, &cli);
+    g_clear_object (&cli);
     entry = session_entry_new (conn, ABANDON_HANDLE_HANDLE);
     session_list_insert (data->session_list, entry);
     g_clear_object (&conn);
     g_clear_object (&entry);
 
-    conn = test_connection_new (ABANDON_HANDLE_ID_2);
+    conn = test_connection_new (ABANDON_HANDLE_ID_2, &cli);
+    g_clear_object (&cli);
     ret = session_list_abandon_handle (data->session_list,
                                        conn,
                                        ABANDON_HANDLE_HANDLE);
@@ -227,11 +229,13 @@ static void
 session_list_abandon_handle_test (void **state)
 {
     test_data_t *data = (test_data_t*)*state;
+    GSocketConnection *cli = NULL;
     Connection *conn = NULL;
     SessionEntry *entry = NULL;
     gboolean ret;
 
-    conn = test_connection_new (ABANDON_HANDLE_ID);
+    conn = test_connection_new (ABANDON_HANDLE_ID, &cli);
+    g_clear_object (&cli);
     entry = session_entry_new (conn, ABANDON_HANDLE_HANDLE);
     session_list_insert (data->session_list, entry);
     g_clear_object (&entry);
@@ -250,11 +254,13 @@ static void
 session_list_claim_abandoned_test (void **state)
 {
     test_data_t *data = (test_data_t*)*state;
+    GSocketConnection *cli = NULL;
     Connection *conn = NULL;
     SessionEntry *entry = NULL;
     gboolean ret;
 
-    conn = test_connection_new (CLAIM_CONNECTION_ID_0);
+    conn = test_connection_new (CLAIM_CONNECTION_ID_0, &cli);
+    g_clear_object (&cli);
     entry = session_entry_new (conn, CLAIM_HANDLE);
     session_list_insert (data->session_list, entry);
 
@@ -264,7 +270,8 @@ session_list_claim_abandoned_test (void **state)
     g_clear_object (&conn);
 
     /* claim abandoned handle from different connection */
-    conn = test_connection_new (CLAIM_CONNECTION_ID_1);
+    conn = test_connection_new (CLAIM_CONNECTION_ID_1, &cli);
+    g_clear_object (&cli);
     ret = session_list_claim (data->session_list, entry, conn);
     assert_true (ret);
     g_clear_object (&entry);
@@ -274,17 +281,20 @@ static void
 session_list_claim_saved_test (void **state)
 {
     test_data_t *data = (test_data_t*)*state;
+    GSocketConnection *cli = NULL;
     Connection *conn = NULL;
     SessionEntry *entry = NULL;
     gboolean ret;
 
-    conn = test_connection_new (CLAIM_CONNECTION_ID_0);
+    conn = test_connection_new (CLAIM_CONNECTION_ID_0, &cli);
+    g_clear_object (&cli);
     entry = session_entry_new (conn, CLAIM_HANDLE);
     session_list_insert (data->session_list, entry);
     session_entry_set_state (entry, SESSION_ENTRY_SAVED_CLIENT);
 
     /* claim abandoned handle from different connection */
-    conn = test_connection_new (CLAIM_CONNECTION_ID_1);
+    conn = test_connection_new (CLAIM_CONNECTION_ID_1, &cli);
+    g_clear_object (&cli);
     ret = session_list_claim (data->session_list, entry, conn);
     assert_true (ret);
     assert_true (session_entry_get_state (entry) == SESSION_ENTRY_LOADED);
@@ -295,11 +305,13 @@ static void
 session_list_claim_fail_test (void **state)
 {
     test_data_t *data = (test_data_t*)*state;
+    GSocketConnection *cli = NULL;
     Connection *conn = NULL;
     SessionEntry *entry = NULL;
     gboolean ret;
 
-    conn = test_connection_new (CLAIM_CONNECTION_ID_0);
+    conn = test_connection_new (CLAIM_CONNECTION_ID_0, &cli);
+    g_clear_object (&cli);
     entry = session_entry_new (conn, CLAIM_HANDLE);
 
     ret = session_list_claim (data->session_list, entry, conn);

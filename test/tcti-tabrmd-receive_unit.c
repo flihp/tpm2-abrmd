@@ -24,11 +24,11 @@
 #include "mock-funcs.h"
 
 /*
- * This tests the tcti_tabrmd_poll function, ensuring that it returns the
+ * This tests the poll_fd function, ensuring that it returns the
  * expected response code for the POLIN event.
  */
 static void
-tcti_tabrmd_poll_fd_ready_pollin (void **state)
+poll_fd_fd_ready_pollin (void **state)
 {
     UNUSED_PARAM (state);
     int ret;
@@ -37,15 +37,15 @@ tcti_tabrmd_poll_fd_ready_pollin (void **state)
     will_return (__wrap_poll, 0);
     will_return (__wrap_poll, 1);
 
-    ret = tcti_tabrmd_poll (TEST_FD, TSS2_TCTI_TIMEOUT_BLOCK);
+    ret = poll_fd (TEST_FD, TSS2_TCTI_TIMEOUT_BLOCK);
     assert_int_equal (ret, 0);
 }
 /*
- * This tests the tcti_tabrmd_poll function, ensuring that it returns the
+ * This tests the poll_fd function, ensuring that it returns the
  * expected response code for the POLLPRI event.
  */
 static void
-tcti_tabrmd_poll_fd_ready_pollpri (void **state)
+poll_fd_fd_ready_pollpri (void **state)
 {
     UNUSED_PARAM (state);
     int ret;
@@ -54,11 +54,11 @@ tcti_tabrmd_poll_fd_ready_pollpri (void **state)
     will_return (__wrap_poll, 0);
     will_return (__wrap_poll, 1);
 
-    ret = tcti_tabrmd_poll (TEST_FD, TSS2_TCTI_TIMEOUT_BLOCK);
+    ret = poll_fd (TEST_FD, TSS2_TCTI_TIMEOUT_BLOCK);
     assert_int_equal (ret, 0);
 }
 /*
- * This tests the tcti_tabrmd_poll function, ensuring that it returns the
+ * This tests the poll_fd function, ensuring that it returns the
  * expected response code for the POLLRDHUP event.
  */
 
@@ -68,7 +68,7 @@ tcti_tabrmd_poll_fd_ready_pollpri (void **state)
 #endif
 #endif
 static void
-tcti_tabrmd_poll_fd_ready_pollrdhup (void **state)
+poll_fd_fd_ready_pollrdhup (void **state)
 {
     UNUSED_PARAM (state);
     int ret;
@@ -77,15 +77,15 @@ tcti_tabrmd_poll_fd_ready_pollrdhup (void **state)
     will_return (__wrap_poll, 0);
     will_return (__wrap_poll, 1);
 
-    ret = tcti_tabrmd_poll (TEST_FD, TSS2_TCTI_TIMEOUT_BLOCK);
+    ret = poll_fd (TEST_FD, TSS2_TCTI_TIMEOUT_BLOCK);
     assert_int_equal (ret, 0);
 }
 /*
- * This tests the tcti_tabrmd_poll function, ensuring that it returns the
+ * This tests the poll_fd function, ensuring that it returns the
  * expected response code when a timeout occurs.
  */
 static void
-tcti_tabrmd_poll_timeout (void **state)
+poll_fd_timeout (void **state)
 {
     UNUSED_PARAM (state);
     int ret;
@@ -94,15 +94,15 @@ tcti_tabrmd_poll_timeout (void **state)
     will_return (__wrap_poll, 0);
     will_return (__wrap_poll, 0);
 
-    ret = tcti_tabrmd_poll (TEST_FD, TSS2_TCTI_TIMEOUT_BLOCK);
+    ret = poll_fd (TEST_FD, TSS2_TCTI_TIMEOUT_BLOCK);
     assert_int_equal (ret, -1);
 }
 /*
- * This tests the tcti_tabrmd_poll function, ensuring that it returns the
+ * This tests the poll_fd function, ensuring that it returns the
  * expected response when an error occurs.
  */
 static void
-tcti_tabrmd_poll_error (void **state)
+poll_fd_error (void **state)
 {
     UNUSED_PARAM (state);
     int ret;
@@ -111,7 +111,7 @@ tcti_tabrmd_poll_error (void **state)
     will_return (__wrap_poll, EINVAL);
     will_return (__wrap_poll, -1);
 
-    ret = tcti_tabrmd_poll (TEST_FD, TSS2_TCTI_TIMEOUT_BLOCK);
+    ret = poll_fd (TEST_FD, TSS2_TCTI_TIMEOUT_BLOCK);
     assert_int_equal (ret, EINVAL);
 }
 /*
@@ -163,15 +163,15 @@ tcti_tabrmd_teardown (void **state)
     return 0;
 }
 /*
- * This test ensures that a call to tcti_tabrmd_read that causes poll to
+ * This test ensures that a call to read_with_timeout that causes poll to
  * timeout will return the appropriate RC.
  */
 static void
-tcti_tabrmd_read_poll_timeout (void **state)
+read_with_timeout_poll_timeout (void **state)
 {
     TSS2_RC rc;
     uint8_t resp [TPM2_MAX_RESPONSE_SIZE] = { 0, };
-    size_t resp_size = sizeof (resp);
+    size_t resp_size = sizeof (resp), index = 0;
     uint32_t timeout = TSS2_TCTI_TIMEOUT_BLOCK;
     TSS2_TCTI_TABRMD_CONTEXT *tcti_ctx = (TSS2_TCTI_TABRMD_CONTEXT*)*state;
 
@@ -183,19 +183,19 @@ tcti_tabrmd_read_poll_timeout (void **state)
     will_return (__wrap_poll, 0);
     will_return (__wrap_poll, 0);
 
-    rc = tcti_tabrmd_read (tcti_ctx, resp, resp_size, timeout);
+    rc = read_with_timeout (tcti_ctx->sock_connect, resp, resp_size, &index, timeout);
     assert_int_equal (rc, TSS2_TCTI_RC_TRY_AGAIN);
 }
 /*
- * This test ensures that a call to tcti_tabrmd_read that causes poll to
+ * This test ensures that a call to read_with_timeout that causes poll to
  * fail / return an error that it will return the appropriate RC.
  */
 static void
-tcti_tabrmd_read_poll_fail (void **state)
+read_with_timeout_poll_fail (void **state)
 {
     TSS2_RC rc;
     uint8_t resp [TPM2_MAX_RESPONSE_SIZE] = { 0, };
-    size_t resp_size = sizeof (resp);
+    size_t resp_size = sizeof (resp), index = 0;
     uint32_t timeout = TSS2_TCTI_TIMEOUT_BLOCK;
     TSS2_TCTI_TABRMD_CONTEXT *tcti_ctx = (TSS2_TCTI_TABRMD_CONTEXT*)*state;
 
@@ -206,19 +206,19 @@ tcti_tabrmd_read_poll_fail (void **state)
     will_return (__wrap_poll, EINVAL);
     will_return (__wrap_poll, -1);
 
-    rc = tcti_tabrmd_read (tcti_ctx, resp, resp_size, timeout);
+    rc = read_with_timeout (tcti_ctx->sock_connect, resp, resp_size, &index, timeout);
     assert_int_equal (rc, TSS2_TCTI_RC_GENERAL_FAILURE);
 }
 /*
- * This test ensures that a call to tcti_tabrmd_read that causes
+ * This test ensures that a call to read_with_timeout that causes
  * g_input_stream_read to return EOF will return the appropriate RC.
  */
 static void
-tcti_tabrmd_read_eof (void **state)
+read_with_timeout_eof (void **state)
 {
     int ret;
     uint8_t resp [TPM2_MAX_RESPONSE_SIZE] = { 0, };
-    size_t resp_size = sizeof (resp);
+    size_t resp_size = sizeof (resp), index = 0;
     uint32_t timeout = TSS2_TCTI_TIMEOUT_BLOCK;
     TSS2_TCTI_TABRMD_CONTEXT *tcti_ctx = (TSS2_TCTI_TABRMD_CONTEXT*)*state;
 
@@ -236,20 +236,20 @@ tcti_tabrmd_read_eof (void **state)
     /* cause g_input_stream_read to return 0 indicating EOF */
     will_return (__wrap_g_input_stream_read, 0);
 
-    ret = tcti_tabrmd_read (tcti_ctx, resp, resp_size, timeout);
+    ret = read_with_timeout (tcti_ctx->sock_connect, resp, resp_size, &index, timeout);
     assert_int_equal (ret, TSS2_TCTI_RC_NO_CONNECTION);
 }
 /*
- * This test ensures that a call to tcti_tabrmd_read that causes
+ * This test ensures that a call to read_with_timeout that causes
  * g_input_stream_read to indicate that it would block, returns the
  * appropriate RC.
  */
 static void
-tcti_tabrmd_read_block_error (void **state)
+read_with_timeout_block_error (void **state)
 {
     int ret;
     uint8_t resp [TPM2_MAX_RESPONSE_SIZE] = { 0, };
-    size_t resp_size = sizeof (resp);
+    size_t resp_size = sizeof (resp), index = 0;
     uint32_t timeout = TSS2_TCTI_TIMEOUT_BLOCK;
     TSS2_TCTI_TABRMD_CONTEXT *tcti_ctx = (TSS2_TCTI_TABRMD_CONTEXT*)*state;
     GError* error;
@@ -269,20 +269,20 @@ tcti_tabrmd_read_block_error (void **state)
     will_return (__wrap_g_input_stream_read, -1);
     will_return (__wrap_g_input_stream_read, error);
 
-    ret = tcti_tabrmd_read (tcti_ctx, resp, resp_size, timeout);
+    ret = read_with_timeout (tcti_ctx->sock_connect, resp, resp_size, &index, timeout);
     assert_int_equal (ret, TSS2_TCTI_RC_TRY_AGAIN);
 }
 /*
  * This test forces the call to 'g_input_stream_read' to read fewer bytes
- * than requested by the caller (the 'tcti_tabrmd_read' in this case). This
+ * than requested by the caller (the 'read_with_timeout' in this case). This
  * is a "short read" and should return an RC telling the caller to retry.
  */
 static void
-tcti_tabrmd_read_short (void **state)
+read_with_timeout_short (void **state)
 {
     int ret;
     uint8_t resp [TPM2_MAX_RESPONSE_SIZE] = { 0, };
-    size_t resp_size = sizeof (resp), read_size = resp_size / 2;
+    size_t resp_size = sizeof (resp), read_size = resp_size / 2, index = 0;
     uint32_t timeout = TSS2_TCTI_TIMEOUT_BLOCK;
     TSS2_TCTI_TABRMD_CONTEXT *tcti_ctx = (TSS2_TCTI_TABRMD_CONTEXT*)*state;
     uint8_t buf [sizeof (resp)] = { 0, };
@@ -301,16 +301,16 @@ tcti_tabrmd_read_short (void **state)
     will_return (__wrap_g_input_stream_read, read_size);
     will_return (__wrap_g_input_stream_read, buf);
 
-    ret = tcti_tabrmd_read (tcti_ctx, resp, resp_size, timeout);
+    ret = read_with_timeout (tcti_ctx->sock_connect, resp, resp_size, &index, timeout);
     assert_int_equal (ret, TSS2_TCTI_RC_TRY_AGAIN);
 }
 static void
-tcti_tabrmd_read_success (void **state)
+read_with_timeout_success (void **state)
 {
     int ret;
     uint8_t resp [TPM2_MAX_RESPONSE_SIZE] = { 0, };
     uint8_t buf [TPM2_MAX_RESPONSE_SIZE] = { 0, };
-    size_t resp_size = sizeof (resp);
+    size_t resp_size = sizeof (resp), index = 0;
     uint32_t timeout = TSS2_TCTI_TIMEOUT_BLOCK;
     TSS2_TCTI_TABRMD_CONTEXT *tcti_ctx = (TSS2_TCTI_TABRMD_CONTEXT*)*state;
 
@@ -327,7 +327,7 @@ tcti_tabrmd_read_success (void **state)
     will_return (__wrap_g_input_stream_read, resp_size);
     will_return (__wrap_g_input_stream_read, buf);
 
-    ret = tcti_tabrmd_read (tcti_ctx, resp, resp_size, timeout);
+    ret = read_with_timeout (tcti_ctx->sock_connect, resp, resp_size, &index, timeout);
     assert_int_equal (ret, TSS2_RC_SUCCESS);
 }
 static void
@@ -666,27 +666,27 @@ int
 main (void)
 {
     const struct CMUnitTest tests[] = {
-        cmocka_unit_test (tcti_tabrmd_poll_fd_ready_pollin),
-        cmocka_unit_test (tcti_tabrmd_poll_fd_ready_pollpri),
-        cmocka_unit_test (tcti_tabrmd_poll_fd_ready_pollrdhup),
-        cmocka_unit_test (tcti_tabrmd_poll_timeout),
-        cmocka_unit_test (tcti_tabrmd_poll_error),
-        cmocka_unit_test_setup_teardown (tcti_tabrmd_read_poll_timeout,
+        cmocka_unit_test (poll_fd_fd_ready_pollin),
+        cmocka_unit_test (poll_fd_fd_ready_pollpri),
+        cmocka_unit_test (poll_fd_fd_ready_pollrdhup),
+        cmocka_unit_test (poll_fd_timeout),
+        cmocka_unit_test (poll_fd_error),
+        cmocka_unit_test_setup_teardown (read_with_timeout_poll_timeout,
                                          tcti_tabrmd_setup,
                                          tcti_tabrmd_teardown),
-        cmocka_unit_test_setup_teardown (tcti_tabrmd_read_poll_fail,
+        cmocka_unit_test_setup_teardown (read_with_timeout_poll_fail,
                                          tcti_tabrmd_setup,
                                          tcti_tabrmd_teardown),
-        cmocka_unit_test_setup_teardown (tcti_tabrmd_read_eof,
+        cmocka_unit_test_setup_teardown (read_with_timeout_eof,
                                          tcti_tabrmd_setup,
                                          tcti_tabrmd_teardown),
-        cmocka_unit_test_setup_teardown (tcti_tabrmd_read_block_error,
+        cmocka_unit_test_setup_teardown (read_with_timeout_block_error,
                                          tcti_tabrmd_setup,
                                          tcti_tabrmd_teardown),
-        cmocka_unit_test_setup_teardown (tcti_tabrmd_read_short,
+        cmocka_unit_test_setup_teardown (read_with_timeout_short,
                                          tcti_tabrmd_setup,
                                          tcti_tabrmd_teardown),
-        cmocka_unit_test_setup_teardown (tcti_tabrmd_read_success,
+        cmocka_unit_test_setup_teardown (read_with_timeout_success,
                                          tcti_tabrmd_setup,
                                          tcti_tabrmd_teardown),
         cmocka_unit_test (tcti_tabrmd_receive_null_context),

@@ -33,3 +33,9 @@ __wrap_g_input_stream_read (GInputStream *stream,
                             gsize count,
                             GCancellable *cancellable,
                             GError **error);
+GTypeInstance*
+__real_g_type_check_instance_cast (GTypeInstance *type_instance,
+                                    GType          iface_type);
+GTypeInstance*
+__wrap_g_type_check_instance_cast (GTypeInstance *type_instance,
+                                    GType          iface_type);
