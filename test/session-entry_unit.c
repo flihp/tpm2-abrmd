@@ -31,16 +31,16 @@ static int
 session_entry_setup (void **state)
 {
     test_data_t *data   = NULL;
-    GIOStream *iostream;
+    GSocketConnection *socket_con;
 
     data = calloc (1, sizeof (test_data_t));
     data->handle_map = handle_map_new (TPM2_HT_TRANSIENT, 100);
-    iostream = create_connection_iostream (&data->client_fd);
-    data->connection = connection_new (iostream,
+    socket_con = create_socket_connection (&data->client_fd);
+    data->connection = connection_new (socket_con,
                                        CLIENT_ID,
                                        data->handle_map);
     data->session_entry = session_entry_new (data->connection, TEST_HANDLE);
-    g_object_unref (iostream);
+    g_object_unref (socket_con);
 
     *state = data;
     return 0;

@@ -16,6 +16,8 @@
 #include "util.h"
 #include "tpm2-header.h"
 
+#include "mock-funcs.h"
+
 #define MAX_BUF 4096
 #define READ_SIZE  UTIL_BUF_SIZE
 #define WRITE_SIZE 10
@@ -26,6 +28,13 @@ GQuark
 util_unit_error_quark (void)
 {
     return g_quark_from_static_string ("util-unit-error-quark");
+}
+
+static void
+g_debug_bytes_max (void **state)
+{
+    UNUSED_PARAM(state);
+    g_debug_bytes (NULL, 0, 100, 40);
 }
 
 ssize_t
@@ -117,39 +126,112 @@ write_zero (void **state)
     written = write_all (0, NULL, WRITE_SIZE);
     assert_int_equal (written, 0);
 }
-/*
- * mock 'read' function: This function expects 3 things to be on the mock
- * queue:
- *   input buffer
- *   offset into input buffer where read starts
- *   GError
- *   return value
- */
-ssize_t
-__wrap_g_input_stream_read (GInputStream  *istream,
-                            gint          *buf,
-                            size_t         count,
-                            GCancellable  *cancellable,
-                            GError       **error)
+
+void
+gerror_code_to_tcti_rc_no_connection (void **state)
 {
-    uint8_t *buf_in    = mock_type (uint8_t*);
-    size_t   buf_index = mock_type (size_t);
-    GError  *error_in  = mock_type (GError*);
-    ssize_t  ret       = mock_type (ssize_t);
-    UNUSED_PARAM(istream);
-    UNUSED_PARAM(cancellable);
+    UNUSED_PARAM(state);
+    assert_int_equal (gerror_code_to_tcti_rc (-1), TSS2_TCTI_RC_NO_CONNECTION);
+}
 
-    g_debug ("%s", __func__);
-    if (error_in != NULL && error != NULL) {
-        *error = error_in;
-    }
-    /* be careful comparing signed to unsigned values */
-    if (ret > 0) {
-        assert_true (ret <= (ssize_t)count);
-        memcpy (buf, &buf_in [buf_index], ret);
-    }
+void
+gerror_code_to_tcti_rc_io_error (void **state)
+{
+    UNUSED_PARAM(state);
+    TSS2_RC rc = gerror_code_to_tcti_rc (G_IO_ERROR_FAILED);
+    assert_int_equal (rc, TSS2_TCTI_RC_IO_ERROR);
+}
 
-    return ret;
+/*
+ * This tests the poll_fd function, ensuring that it returns the
+ * expected response code for the POLIN event.
+ */
+static void
+poll_fd_fd_ready_pollin (void **state)
+{
+    UNUSED_PARAM (state);
+    int ret;
+
+    will_return (__wrap_poll, POLLIN);
+    will_return (__wrap_poll, 0);
+    will_return (__wrap_poll, 1);
+
+    ret = poll_fd (TEST_FD, TSS2_TCTI_TIMEOUT_BLOCK);
+    assert_int_equal (ret, 0);
+}
+/*
+ * This tests the poll_fd function, ensuring that it returns the
+ * expected response code for the POLLPRI event.
+ */
+static void
+poll_fd_fd_ready_pollpri (void **state)
+{
+    UNUSED_PARAM (state);
+    int ret;
+
+    will_return (__wrap_poll, POLLPRI);
+    will_return (__wrap_poll, 0);
+    will_return (__wrap_poll, 1);
+
+    ret = poll_fd (TEST_FD, TSS2_TCTI_TIMEOUT_BLOCK);
+    assert_int_equal (ret, 0);
+}
+/*
+ * This tests the poll_fd function, ensuring that it returns the
+ * expected response code for the POLLRDHUP event.
+ */
+
+#if defined(__FreeBSD__)
+#ifndef POLLRDHUP
+#define POLLRDHUP 0x0
+#endif
+#endif
+static void
+poll_fd_fd_ready_pollrdhup (void **state)
+{
+    UNUSED_PARAM (state);
+    int ret;
+
+    will_return (__wrap_poll, POLLRDHUP);
+    will_return (__wrap_poll, 0);
+    will_return (__wrap_poll, 1);
+
+    ret = poll_fd (TEST_FD, TSS2_TCTI_TIMEOUT_BLOCK);
+    assert_int_equal (ret, 0);
+}
+/*
+ * This tests the poll_fd function, ensuring that it returns the
+ * expected response code when a timeout occurs.
+ */
+static void
+poll_fd_timeout (void **state)
+{
+    UNUSED_PARAM (state);
+    int ret;
+
+    will_return (__wrap_poll, 0);
+    will_return (__wrap_poll, 0);
+    will_return (__wrap_poll, 0);
+
+    ret = poll_fd (TEST_FD, TSS2_TCTI_TIMEOUT_BLOCK);
+    assert_int_equal (ret, -1);
+}
+/*
+ * This tests the poll_fd function, ensuring that it returns the
+ * expected response when an error occurs.
+ */
+static void
+poll_fd_error (void **state)
+{
+    UNUSED_PARAM (state);
+    int ret;
+
+    will_return (__wrap_poll, 0);
+    will_return (__wrap_poll, EINVAL);
+    will_return (__wrap_poll, -1);
+
+    ret = poll_fd (TEST_FD, TSS2_TCTI_TIMEOUT_BLOCK);
+    assert_int_equal (ret, EINVAL);
 }
 /* global static input array used by read_data* tests */
 static uint8_t buf_in [MAX_BUF] = {
@@ -164,10 +246,11 @@ static uint8_t buf_in [MAX_BUF] = {
  * Data structure to hold data for read tests.
  */
 typedef struct {
-    GIOStream *iostream;
+    GSocketConnection *sock_con;
     size_t  index;
     uint8_t buf_out [MAX_BUF];
     size_t  buf_size;
+    int client;
 } data_t;
 
 static int
@@ -175,9 +258,9 @@ read_data_setup (void **state)
 {
     data_t *data;
 
-    data = calloc (1, sizeof (data_t));
+    data = g_malloc0 (sizeof (data_t));
     data->buf_size = 26;
-    data->iostream = (GIOStream*)1;
+    data->sock_con = TEST_CONNECTION;
 
     *state = data;
     return 0;
@@ -205,406 +288,229 @@ create_socket_pair_success_test (void **state)
     flags = O_CLOEXEC;
 #endif
 
+    will_return (__wrap_socketpair, TEST_FD);
+    will_return (__wrap_socketpair, TEST_FD_B);
+    will_return (__wrap_socketpair, 0);
     ret = create_socket_pair (&client_fd, &server_fd, flags);
-    if (ret == -1)
-        g_error ("create_pipe_pair failed: %s", strerror (errno));
-    close (client_fd);
-}
-
-/*
- * Simple call to read wrapper function. Returns exactly what we ask for.
- * We check to be sure return value is 0, the index variable is updated
- * properly and that the output data buffer is the same as the input.
- */
-static void
-read_data_success_test (void **state)
-{
-    data_t *data = *state;
-    int ret = 0;
-
-    /* prime the wrap queue for a successful read */
-    will_return (__wrap_g_input_stream_read, buf_in);
-    will_return (__wrap_g_input_stream_read, data->index);
-    will_return (__wrap_g_input_stream_read, NULL);
-    will_return (__wrap_g_input_stream_read, data->buf_size);
-
-    ret = read_data (NULL, &data->index, data->buf_out, data->buf_size);
     assert_int_equal (ret, 0);
-    assert_int_equal (data->index, data->buf_size);
-    assert_memory_equal (data->buf_out, buf_in, data->buf_size);
+    assert_int_equal (client_fd, TEST_FD);
+    assert_int_equal (server_fd, TEST_FD_B);
 }
 
-/*
- * This tests a simple error case where read returns -1 and errno is set to
- * EIO. In this case the index should remain unchanged (0).
- */
 static void
-read_data_error_test (void **state)
+create_socket_pair_fail (void **state)
 {
-    data_t *data = *state;
-    int ret = 0;
-    GError *error;
+    int ret, fd_a = 0, fd_b = 0, flags = 0;
+    UNUSED_PARAM(state);
 
-    error = g_error_new (UTIL_UNIT_ERROR,
-                         G_IO_ERROR_WOULD_BLOCK,
-                         "g-io-error-would-block");
-    will_return (__wrap_g_input_stream_read, buf_in);
-    will_return (__wrap_g_input_stream_read, data->index);
-    will_return (__wrap_g_input_stream_read, error);
-    will_return (__wrap_g_input_stream_read, -1);
+#if !defined(__FreeBSD__)
+    flags = O_CLOEXEC;
+#endif
 
-    ret = read_data (NULL, &data->index, data->buf_out, data->buf_size);
-    assert_int_equal (ret, G_IO_ERROR_WOULD_BLOCK);
-    assert_int_equal (data->index, 0);
-}
-/*
- * This test covers the 'short read'. A single call to 'read_data' results in
- * a the first read returning half the data (not an error), followed by
- * the second half obtained through a second 'read' call.
- */
-static void
-read_data_short_success_test (void **state)
-{
-    data_t *data = *state;
-    int ret = 0;
-
-    /* prime the wrap queue for a short read (half the requested size) */
-    will_return (__wrap_g_input_stream_read, buf_in);
-    will_return (__wrap_g_input_stream_read, data->index);
-    will_return (__wrap_g_input_stream_read, 0);
-    will_return (__wrap_g_input_stream_read, data->buf_size / 2);
-    /* do it again for the second half of the read */
-    will_return (__wrap_g_input_stream_read, buf_in);
-    will_return (__wrap_g_input_stream_read, data->buf_size / 2);
-    will_return (__wrap_g_input_stream_read, 0);
-    will_return (__wrap_g_input_stream_read, data->buf_size / 2);
-
-    ret = read_data (NULL, &data->index, data->buf_out, data->buf_size);
-    assert_int_equal (ret, 0);
-    assert_int_equal (data->index, data->buf_size);
-    assert_memory_equal (data->buf_out, buf_in, data->buf_size);
-}
-/*
- * This test covers a short read followed by a failing 'read'. NOTE: half of
- * the buffer is filled due to the first read succeeding.
- */
-static void
-read_data_short_err_test (void **state)
-{
-    data_t *data = *state;
-    int ret = 0;
-    GError *error;
-
-    /*
-     * Prime the wrap queue for another short read, again half the requested
-     * size.
-     */
-    will_return (__wrap_g_input_stream_read, buf_in);
-    will_return (__wrap_g_input_stream_read, data->index);
-    will_return (__wrap_g_input_stream_read, 0);
-    will_return (__wrap_g_input_stream_read, data->buf_size / 2);
-    /* */
-    error = g_error_new (UTIL_UNIT_ERROR,
-                         G_IO_ERROR_WOULD_BLOCK,
-                         "g-io-error-would-block");
-    will_return (__wrap_g_input_stream_read, buf_in);
-    will_return (__wrap_g_input_stream_read, data->buf_size / 2);
-    will_return (__wrap_g_input_stream_read, error);
-    will_return (__wrap_g_input_stream_read, -1);
-    /* read the second half of the buffer, the index maintains the state */
-    ret = read_data (NULL, &data->index, data->buf_out, data->buf_size);
-    assert_int_equal (ret, G_IO_ERROR_WOULD_BLOCK);
-    assert_int_equal (data->index, data->buf_size / 2);
-    assert_memory_equal (data->buf_out, buf_in, data->buf_size / 2);
-}
-/*
- * This test covers a single call returning EOF. This is signaled to the
- * through the return value which is -1.
- */
-static void
-read_data_eof_test (void **state)
-{
-    data_t *data = *state;
-    int ret = 0;
-
-    will_return (__wrap_g_input_stream_read, buf_in);
-    will_return (__wrap_g_input_stream_read, data->index);
-    will_return (__wrap_g_input_stream_read, 0);
-    will_return (__wrap_g_input_stream_read, 0);
-
-    ret = read_data (NULL, &data->index, data->buf_out, data->buf_size);
+    will_return (__wrap_socketpair, 0);
+    will_return (__wrap_socketpair, 0);
+    will_return (__wrap_socketpair, -1);
+    ret = create_socket_pair (&fd_a, &fd_b, flags);
     assert_int_equal (ret, -1);
-    assert_int_equal (data->index, 0);
 }
+
+static void
+errno_to_tcti_rc_no_connection (void **state)
+{
+    UNUSED_PARAM(state);
+    assert_int_equal (errno_to_tcti_rc (-1), TSS2_TCTI_RC_NO_CONNECTION);
+}
+
+static void
+errno_to_tcti_rc_success (void **state)
+{
+    UNUSED_PARAM(state);
+    assert_int_equal (errno_to_tcti_rc (0), TSS2_RC_SUCCESS);
+}
+
+static void
+errno_to_tcti_rc_eagain (void **state)
+{
+    UNUSED_PARAM(state);
+    assert_int_equal (errno_to_tcti_rc (EAGAIN), TSS2_TCTI_RC_TRY_AGAIN);
+}
+
+static void
+errno_to_tcti_rc_eio (void **state)
+{
+    UNUSED_PARAM(state);
+    assert_int_equal (errno_to_tcti_rc (EIO), TSS2_TCTI_RC_IO_ERROR);
+}
+
 /*
- * This test covers the common case when reading a tpm command / response
- * buffer. read_tpm_buffer first reads the header (10 bytes), extracts the
- * size field from the header, and then reads this many bytes into the
- * provided buffer.
+ * This test ensures that a call to read_with_timeout that causes poll to
+ * timeout will return the appropriate RC.
  */
 static void
-read_tpm_buf_success_test (void **state)
+read_with_timeout_poll_timeout (void **state)
 {
+    TSS2_RC rc;
+    uint8_t resp [TPM2_MAX_RESPONSE_SIZE] = { 0, };
+    size_t resp_size = sizeof (resp), index = 0;
+    uint32_t timeout = TSS2_TCTI_TIMEOUT_BLOCK;
     data_t *data = *state;
-    int ret = 0;
 
-    /* prime read to successfully produce the header */
-    will_return (__wrap_g_input_stream_read, buf_in);
-    will_return (__wrap_g_input_stream_read, 0);
-    will_return (__wrap_g_input_stream_read, 0);
-    will_return (__wrap_g_input_stream_read, 10);
-    /* prime read to successfully produce the rest of the buffer */
-    will_return (__wrap_g_input_stream_read, buf_in);
-    will_return (__wrap_g_input_stream_read, 10);
-    will_return (__wrap_g_input_stream_read, 0);
-    will_return (__wrap_g_input_stream_read, data->buf_size - 10);
+    will_return (__wrap_g_socket_connection_get_socket, TEST_SOCKET);
+    will_return (__wrap_g_socket_get_fd, TEST_FD);
 
-    ret = read_tpm_buffer (NULL,
-                           &data->index,
-                           data->buf_out,
-                           data->buf_size);
-    assert_int_equal (ret, 0);
-    assert_int_equal (data->index, data->buf_size);
-    assert_memory_equal (data->buf_out, buf_in, data->buf_size);
+    /* prime mock stack for poll, will return 0 indicating timeout */
+    will_return (__wrap_poll, 0);
+    will_return (__wrap_poll, 0);
+    will_return (__wrap_poll, 0);
+
+    rc = read_with_timeout (data->sock_con, resp, resp_size, &index, timeout);
+    assert_int_equal (rc, TSS2_TCTI_RC_TRY_AGAIN);
 }
+
 /*
- * This tests the code path where a header is successfully read and the size
- * field in the header is the size of the header.
+ * This test ensures that a call to read_with_timeout that causes poll to
+ * fail / return an error that it will return the appropriate RC.
  */
 static void
-read_tpm_buf_header_only_success_test (void **state)
+read_with_timeout_poll_fail (void **state)
 {
+    TSS2_RC rc;
+    uint8_t resp [TPM2_MAX_RESPONSE_SIZE] = { 0, };
+    size_t resp_size = sizeof (resp), index = 0;
+    uint32_t timeout = TSS2_TCTI_TIMEOUT_BLOCK;
     data_t *data = *state;
-    int ret = 0;
-    uint8_t buf [10] = {
-        0x80, 0x02, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00, 0x00
-    };
 
-    /* prime read to successfully produce the header */
-    data->buf_size = 10;
-    will_return (__wrap_g_input_stream_read, buf);
-    will_return (__wrap_g_input_stream_read, 0);
-    will_return (__wrap_g_input_stream_read, 0);
-    will_return (__wrap_g_input_stream_read, 10);
+    will_return (__wrap_g_socket_connection_get_socket, TEST_SOCKET);
+    will_return (__wrap_g_socket_get_fd, TEST_FD);
 
-    ret = read_tpm_buffer (NULL,
-                           &data->index,
-                           data->buf_out,
-                           data->buf_size);
-    assert_int_equal (ret, 0);
-    assert_int_equal (data->index, data->buf_size);
-    assert_memory_equal (data->buf_out, buf, data->buf_size);
+    will_return (__wrap_poll, 0);
+    will_return (__wrap_poll, EINVAL);
+    will_return (__wrap_poll, -1);
+
+    rc = read_with_timeout (data->sock_con, resp, resp_size, &index, timeout);
+    assert_int_equal (rc, TSS2_TCTI_RC_GENERAL_FAILURE);
 }
 /*
- * Test the condition where the header read has a size larger than the
- * provided buffer.
+ * This test ensures that a call to read_with_timeout that causes
+ * g_input_stream_read to return EOF will return the appropriate RC.
  */
 static void
-read_tpm_buf_lt_header_test (void **state)
+read_with_timeout_eof (void **state)
 {
+    int ret;
+    uint8_t resp [TPM2_MAX_RESPONSE_SIZE] = { 0, };
+    size_t resp_size = sizeof (resp), index = 0;
+    uint32_t timeout = TSS2_TCTI_TIMEOUT_BLOCK;
     data_t *data = *state;
-    int ret = 0;
 
-    ret = read_tpm_buffer (NULL, &data->index, data->buf_out, 8);
-    assert_int_equal (ret, EPROTO);
-    assert_int_equal (data->index, 0);
+    /* mock stack required to extract the fd from the GSocketConnection */
+    will_return (__wrap_g_socket_connection_get_socket, TEST_SOCKET);
+    will_return (__wrap_g_socket_get_fd, TEST_FD);
+
+    /* prime mock stack for poll to indicate data is ready */
+    will_return (__wrap_poll, POLLIN);
+    will_return (__wrap_poll, 0);
+    will_return (__wrap_poll, 1);
+
+    /* mock stack required to extract GIStream */
+    will_return (__wrap_g_io_stream_get_input_stream, TEST_CONNECTION);
+    /* cause g_input_stream_read to return 0 indicating EOF */
+    will_return (__wrap_g_input_stream_read, 0);
+
+    ret = read_with_timeout (data->sock_con, resp, resp_size, &index, timeout);
+    assert_int_equal (ret, TSS2_TCTI_RC_NO_CONNECTION);
 }
-
+/*
+ * This test ensures that a call to read_with_timeout that causes
+ * g_input_stream_read to indicate that it would block, returns the
+ * appropriate RC.
+ */
 static void
-read_tpm_buf_short_header_test (void **state)
+read_with_timeout_block_error (void **state)
 {
+    int ret;
+    uint8_t resp [TPM2_MAX_RESPONSE_SIZE] = { 0, };
+    size_t resp_size = sizeof (resp), index = 0;
+    uint32_t timeout = TSS2_TCTI_TIMEOUT_BLOCK;
     data_t *data = *state;
-    int ret = 0;
-    GError *error;
+    GError* error;
 
-    /*
-     * Prime read to successfully produce 4 bytes. This is a short read to
-     * exercise the error handling path in the function under test.
-     */
-    will_return (__wrap_g_input_stream_read, buf_in);
-    will_return (__wrap_g_input_stream_read, 0);
-    will_return (__wrap_g_input_stream_read, 0);
-    will_return (__wrap_g_input_stream_read, 4);
+    /* mock stack required to extract the fd from the GSocketConnection */
+    will_return (__wrap_g_socket_connection_get_socket, TEST_SOCKET);
+    will_return (__wrap_g_socket_get_fd, TEST_FD);
 
-    error = g_error_new (UTIL_UNIT_ERROR,
-                         G_IO_ERROR_WOULD_BLOCK,
-                         "g-io-error-would-block");
-    will_return (__wrap_g_input_stream_read, buf_in);
-    will_return (__wrap_g_input_stream_read, 4);
-    will_return (__wrap_g_input_stream_read, error);
+    /* prime mock stack for poll to indicate data is ready */
+    will_return (__wrap_poll, POLLIN);
+    will_return (__wrap_poll, 0);
+    will_return (__wrap_poll, 1);
+
+    /* mock stack required to extract GIStream & read data */
+    will_return (__wrap_g_io_stream_get_input_stream, TEST_CONNECTION);
+    error = g_error_new (1, G_IO_ERROR_WOULD_BLOCK, __func__);
     will_return (__wrap_g_input_stream_read, -1);
+    will_return (__wrap_g_input_stream_read, error);
 
-    ret = read_tpm_buffer (NULL,
-                           &data->index,
-                           data->buf_out,
-                           data->buf_size);
-    assert_int_equal (ret, G_IO_ERROR_WOULD_BLOCK);
-    assert_int_equal (data->index, 4);
-    assert_memory_equal (data->buf_out, buf_in, data->index);
+    ret = read_with_timeout (data->sock_con, resp, resp_size, &index, timeout);
+    assert_int_equal (ret, TSS2_TCTI_RC_TRY_AGAIN);
 }
 /*
- * Test the condition where the header read has a size larger than the
- * provided buffer.
+ * This test forces the call to 'g_input_stream_read' to read fewer bytes
+ * than requested by the caller (the 'read_with_timeout' in this case). This
+ * is a "short read" and should return an RC telling the caller to retry.
  */
 static void
-read_tpm_buf_lt_body_test (void **state)
+read_with_timeout_short (void **state)
 {
+    int ret;
+    uint8_t resp [TPM2_MAX_RESPONSE_SIZE] = { 0, };
+    size_t resp_size = sizeof (resp), read_size = resp_size / 2, index = 0;
+    uint32_t timeout = TSS2_TCTI_TIMEOUT_BLOCK;
     data_t *data = *state;
-    int ret = 0;
+    uint8_t buf [sizeof (resp)] = { 0, };
 
-    /*
-     * Prime read to successfully produce 10 bytes. This is the number of
-     * bytes that the first 'read' syscall is asked to produce (header).
-     */
-    will_return (__wrap_g_input_stream_read, buf_in);
-    will_return (__wrap_g_input_stream_read, data->index);
-    will_return (__wrap_g_input_stream_read, 0);
-    will_return (__wrap_g_input_stream_read, 10);
+    /* mock stack required to extract the fd from the GSocketConnection */
+    will_return (__wrap_g_socket_connection_get_socket, TEST_SOCKET);
+    will_return (__wrap_g_socket_get_fd, TEST_FD);
 
-    ret = read_tpm_buffer (NULL, &data->index, data->buf_out, 11);
-    assert_int_equal (ret, EPROTO);
-    assert_int_equal (data->index, 10);
-    assert_memory_equal (data->buf_out, buf_in, 10);
+    /* prime mock stack for poll to indicate data is ready */
+    will_return (__wrap_poll, POLLIN);
+    will_return (__wrap_poll, 0);
+    will_return (__wrap_poll, 1);
+
+    /* mock stack required to extract GIStream & read data */
+    will_return (__wrap_g_io_stream_get_input_stream, TEST_CONNECTION);
+    will_return (__wrap_g_input_stream_read, read_size);
+    will_return (__wrap_g_input_stream_read, buf);
+
+    ret = read_with_timeout (data->sock_con, resp, resp_size, &index, timeout);
+    assert_int_equal (ret, TSS2_TCTI_RC_TRY_AGAIN);
 }
-/*
- * Read the header in one go. The second call to 'read' will be an attempt to
- * read the body of the command. We setup the mock stuff such that we get a
- * short read, followed by the rest of the command.
- */
 static void
-read_tpm_buf_short_body_test (void **state)
+read_with_timeout_success (void **state)
 {
+    int ret;
+    uint8_t resp [TPM2_MAX_RESPONSE_SIZE] = { 0, };
+    uint8_t buf [TPM2_MAX_RESPONSE_SIZE] = { 0, };
+    size_t resp_size = sizeof (resp), index = 0;
+    uint32_t timeout = TSS2_TCTI_TIMEOUT_BLOCK;
     data_t *data = *state;
-    int ret = 0;
 
-    /*
-     * Prime read to successfully produce 10 bytes. This is the number of
-     * bytes that the first 'read' syscall is asked to produce (header).
-     */
-    will_return (__wrap_g_input_stream_read, buf_in);
-    will_return (__wrap_g_input_stream_read, 0);
-    will_return (__wrap_g_input_stream_read, 0);
-    will_return (__wrap_g_input_stream_read, 10);
-    /* Now cause a short read when getting the body of the buffer. */
-    will_return (__wrap_g_input_stream_read, buf_in);
-    will_return (__wrap_g_input_stream_read, 10);
-    will_return (__wrap_g_input_stream_read, 0);
-    will_return (__wrap_g_input_stream_read, 5);
-    /* And then the rest of the buffer */
-    will_return (__wrap_g_input_stream_read, buf_in);
-    will_return (__wrap_g_input_stream_read, 15);
-    will_return (__wrap_g_input_stream_read, 0);
-    will_return (__wrap_g_input_stream_read, data->buf_size - 15);
+    /* prime mock stack for poll to indicate data is ready */
+    will_return (__wrap_poll, POLLIN);
+    will_return (__wrap_poll, 0);
+    will_return (__wrap_poll, 1);
+    /* mock stack required to extract the fd from the GSocketConnection */
+    will_return (__wrap_g_socket_connection_get_socket, TEST_SOCKET);
+    will_return (__wrap_g_socket_get_fd, TEST_FD);
 
-    ret = read_tpm_buffer (NULL,
-                           &data->index,
-                           data->buf_out,
-                           data->buf_size);
-    assert_int_equal (ret, 0);
-    assert_int_equal (data->index, data->buf_size);
-    assert_memory_equal (data->buf_out, buf_in, data->buf_size);
+    /* mock stack required to extract GIStream & read data */
+    will_return (__wrap_g_io_stream_get_input_stream, TEST_CONNECTION);
+    will_return (__wrap_g_input_stream_read, resp_size);
+    will_return (__wrap_g_input_stream_read, buf);
+
+    ret = read_with_timeout (data->sock_con, resp, resp_size, &index, timeout);
+    assert_int_equal (ret, TSS2_RC_SUCCESS);
 }
-/*
- * The following tests cover cases where the 'read_tpm_buffer' function is
- * called with the tpm buffer is partially populated (from previous calls to
- * same function) with the index value set appropriately.
- */
-/*
- * This test sets up a buffer such that the first 4 bytes of the header have
- * already been populated and the index set accordingly. The read_tpm_buffer
- * function is then invoked as though it has bee previously interrupted.
- * This results in the last 6 bytes of the header being read, followed by
- * the rest of the buffer.
- */
-static void
-read_tpm_buf_populated_header_half_test (void **state)
-{
-    data_t *data = *state;
-    int ret = 0;
-    /* buffer already has 4 bytes of data */
-    memcpy (data->buf_out, buf_in, 4);
-
-    /* prime read to successfully produce the header */
-    data->index = 4;
-    /* read the last 6 bytes of the header */
-    will_return (__wrap_g_input_stream_read, buf_in);
-    will_return (__wrap_g_input_stream_read, 4);
-    will_return (__wrap_g_input_stream_read, 0);
-    will_return (__wrap_g_input_stream_read, 6);
-    /* read the rest of the body (26 - 10) */
-    will_return (__wrap_g_input_stream_read, buf_in);
-    will_return (__wrap_g_input_stream_read, 10);
-    will_return (__wrap_g_input_stream_read, 0);
-    will_return (__wrap_g_input_stream_read, 16);
-
-    ret = read_tpm_buffer (NULL,
-                           &data->index,
-                           data->buf_out,
-                           data->buf_size);
-    assert_int_equal (ret, 0);
-    assert_int_equal (data->index, data->buf_size);
-    assert_memory_equal (data->buf_out, buf_in, data->buf_size);
-}
-/*
- * This test is a bit weird. We pass a buffer that has already had the header
- * populated and the index incremented to the end of the header. The call to
- * read_tpm_buffer is smart enough to know the header has already been read
- * so it extracts the size from the header. This is however the size of the
- * header and so the function returns before any read operation happens.
- */
-static void
-read_tpm_buf_populated_header_only_test (void **state)
-{
-    data_t *data = *state;
-    int ret = 0;
-    uint8_t buf [10] = {
-        0x80, 0x02, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00, 0x00
-    };
-
-    /* prime read to successfully produce the header */
-    data->buf_size = 10;
-    data->index = 10;
-    memcpy (data->buf_out, buf, data->buf_size);
-
-    ret = read_tpm_buffer (NULL,
-                           &data->index,
-                           data->buf_out,
-                           data->buf_size);
-    assert_int_equal (ret, 0);
-    assert_int_equal (data->index, data->buf_size);
-    assert_memory_equal (data->buf_out, buf, data->buf_size);
-}
-/*
- * This test initializes a buffer as though it has already been populated
- * beyond the header (16 bytes) with the index set accordingly. The call to
- * read_tpm_buffer then picks up where it left off filling in the remainder
- * of the buffer.
- */
-static void
-read_tpm_buf_populated_body_test (void **state)
-{
-    data_t *data = *state;
-    int ret = 0;
-
-    memcpy (data->buf_out, buf_in, 16);
-
-    /* prime read to successfully produce the header */
-    data->index = 16;
-
-    will_return (__wrap_g_input_stream_read, buf_in);
-    will_return (__wrap_g_input_stream_read, 16);
-    will_return (__wrap_g_input_stream_read, 0);
-    will_return (__wrap_g_input_stream_read, 10);
-
-    ret = read_tpm_buffer (NULL,
-                           &data->index,
-                           data->buf_out,
-                           data->buf_size);
-    assert_int_equal (ret, 0);
-    assert_int_equal (data->index, data->buf_size);
-    assert_memory_equal (data->buf_out, buf_in, data->buf_size);
-}
-
 static void
 read_tpm_buf_alloc_success_test (void **state)
 {
@@ -612,18 +518,36 @@ read_tpm_buf_alloc_success_test (void **state)
     uint8_t *buf;
     size_t   buf_size;
 
+    /* do not mock g_malloc0: if glib cannot allocate memory it aborts */
+    /* prime g_socket_connection_get_socket */
+    will_return (__wrap_g_socket_connection_get_socket, TEST_SOCKET);
+    /* prime g_socket_get_fd */
+    will_return (__wrap_g_socket_get_fd, TEST_FD);
+    /* prime poll to successfully */
+    will_return (__wrap_poll, POLLIN); // data ready
+    will_return (__wrap_poll, 0); // errno
+    will_return (__wrap_poll, 1); // return value
+    /* prime g_io_stream_get_input_stream */
+    will_return (__wrap_g_io_stream_get_input_stream, TEST_CONNECTION);
     /* prime read to successfully produce the header */
-    will_return (__wrap_g_input_stream_read, buf_in);
-    will_return (__wrap_g_input_stream_read, 0);
-    will_return (__wrap_g_input_stream_read, 0);
     will_return (__wrap_g_input_stream_read, 10);
-    /* prime read to successfully produce the rest of the buffer */
     will_return (__wrap_g_input_stream_read, buf_in);
-    will_return (__wrap_g_input_stream_read, 10);
-    will_return (__wrap_g_input_stream_read, 0);
-    will_return (__wrap_g_input_stream_read, data->buf_size - 10);
 
-    buf = read_tpm_buffer_alloc ((GInputStream*)1, &buf_size);
+    /* prime g_socket_connection_get_socket */
+    will_return (__wrap_g_socket_connection_get_socket, TEST_SOCKET);
+    /* prime g_socket_get_fd */
+    will_return (__wrap_g_socket_get_fd, TEST_FD);
+    /* prime poll to successfully */
+    will_return (__wrap_poll, POLLIN); // data ready
+    will_return (__wrap_poll, 0); // errno
+    will_return (__wrap_poll, 1); // return value
+    /* prime g_io_stream_get_input_stream */
+    will_return (__wrap_g_io_stream_get_input_stream, TEST_CONNECTION);
+    /* prime read to successfully produce the rest of the buffer */
+    will_return (__wrap_g_input_stream_read, data->buf_size - 10);
+    will_return (__wrap_g_input_stream_read, buf_in + 10);
+
+    buf = read_tpm_buffer_alloc (data->sock_con, &buf_size);
     assert_non_null (buf);
     assert_int_equal (buf_size, data->buf_size);
     assert_memory_equal (buf, buf_in, data->buf_size);
@@ -641,12 +565,21 @@ read_tpm_buf_alloc_header_only_test (void **state)
 
     /* prime read to successfully produce the header */
     data->buf_size = 10;
-    will_return (__wrap_g_input_stream_read, buf);
-    will_return (__wrap_g_input_stream_read, 0);
-    will_return (__wrap_g_input_stream_read, 0);
+    /* prime g_socket_connection_get_socket */
+    will_return (__wrap_g_socket_connection_get_socket, TEST_SOCKET);
+    /* prime g_socket_get_fd */
+    will_return (__wrap_g_socket_get_fd, TEST_FD);
+    /* prime poll to successfully */
+    will_return (__wrap_poll, POLLIN); // data ready
+    will_return (__wrap_poll, 0); // errno
+    will_return (__wrap_poll, 1); // return value
+    /* prime g_io_stream_get_input_stream */
+    will_return (__wrap_g_io_stream_get_input_stream, TEST_CONNECTION);
+    /* prime read to successfully produce the header */
     will_return (__wrap_g_input_stream_read, 10);
+    will_return (__wrap_g_input_stream_read, buf);
 
-    buf_out = read_tpm_buffer_alloc ((GInputStream*)1, &data->buf_size);
+    buf_out = read_tpm_buffer_alloc (data->sock_con, &data->buf_size);
     assert_non_null (buf_out);
     assert_int_equal (data->buf_size, TPM_HEADER_SIZE);
     assert_memory_equal (buf_out, buf, data->buf_size);
@@ -655,72 +588,192 @@ read_tpm_buf_alloc_header_only_test (void **state)
 static void
 read_tpm_buf_alloc_eof_test (void **state)
 {
+    data_t *data = *state;
     uint8_t *buf;
     size_t   buf_size;
     UNUSED_PARAM(state);
 
+    /* prime g_socket_connection_get_socket */
+    will_return (__wrap_g_socket_connection_get_socket, TEST_SOCKET);
+    /* prime g_socket_get_fd */
+    will_return (__wrap_g_socket_get_fd, TEST_FD);
+    /* prime poll to successfully */
+    will_return (__wrap_poll, POLLIN); // data ready
+    will_return (__wrap_poll, 0); // errno
+    will_return (__wrap_poll, 1); // return value
+    /* prime g_io_stream_get_input_stream */
+    will_return (__wrap_g_io_stream_get_input_stream, TEST_CONNECTION);
     /* prime read to successfully produce the header */
-    will_return (__wrap_g_input_stream_read, buf_in);
-    will_return (__wrap_g_input_stream_read, 0);
-    will_return (__wrap_g_input_stream_read, 0);
     will_return (__wrap_g_input_stream_read, 0);
 
-    buf = read_tpm_buffer_alloc ((GInputStream*)1, &buf_size);
+    buf = read_tpm_buffer_alloc (data->sock_con, &buf_size);
     assert_null (buf);
+}
+
+static void
+read_tpm_buf_alloc_short_read_header (void **state)
+{
+    data_t *data = *state;
+    size_t  buf_size;
+    uint8_t buf [TPM_HEADER_SIZE] = {
+        0x80, 0x02,
+        0x00, 0x00, 0x00, 0x0a, /* TPM_HEADER_SIZE -> resp is just header */
+        0x00, 0x00, 0x00, 0x00,
+    };
+
+    /* first read */
+    /* setup getter to return our mock socket */
+    will_return (__wrap_g_socket_connection_get_socket, TEST_SOCKET);
+    /* setup getter to return our mock fd */
+    will_return (__wrap_g_socket_get_fd, TEST_FD);
+    /* setup poll to succeed w/ data ready */
+    will_return (__wrap_poll, POLLIN); // data ready
+    will_return (__wrap_poll, 0); // errno
+    will_return (__wrap_poll, 1); // return value
+    /* setup getter to return our mock connection */
+    will_return (__wrap_g_io_stream_get_input_stream, TEST_CONNECTION);
+    /* setup read to produce the FIRST HALF of the header */
+    will_return (__wrap_g_input_stream_read, TPM_HEADER_SIZE / 2);
+    will_return (__wrap_g_input_stream_read, buf);
+
+    /* second read */
+    /* setup getter to return our mock socket */
+    will_return (__wrap_g_socket_connection_get_socket, TEST_SOCKET);
+    /* setup getter to return our mock fd */
+    will_return (__wrap_g_socket_get_fd, TEST_FD);
+    /* setup poll to succeed w/ data ready */
+    will_return (__wrap_poll, POLLIN); // data ready
+    will_return (__wrap_poll, 0); // errno
+    will_return (__wrap_poll, 1); // return value
+    /* setup getter to return our mock connection */
+    will_return (__wrap_g_io_stream_get_input_stream, TEST_CONNECTION);
+    /* setup read to produce the FIRST HALF of the header */
+    will_return (__wrap_g_input_stream_read, TPM_HEADER_SIZE / 2);
+    will_return (__wrap_g_input_stream_read, &buf[TPM_HEADER_SIZE / 2]);
+
+    /* read_tpm_buffer_alloc: This test tries to read TPM_HEADER_SIZE bytes
+       from a mock GSocketConnection using the read_tpm_buffer_alloc
+       function. We mocked up the plumbing above to return
+       TPM_HEADER_SIZE /2 bytes on the first read and the rest of the
+       header on the next one. We expect the function under test to deal
+       with these two reads transparently. It should return the expected
+       bytes from the input 'buf'.
+     */
+    uint8_t *buf_out = NULL;
+    buf_out = read_tpm_buffer_alloc (data->sock_con, &buf_size);
+    assert_non_null (buf_out);
+    assert_int_equal (TPM_HEADER_SIZE, buf_size);
+    g_free (buf_out);
+}
+
+static void
+read_tpm_buf_alloc_short_read_body (void **state)
+{
+    data_t *data = *state;
+    size_t  buf_size = 0, short_index = 0;
+
+    /* first read */
+    /* setup getter to return our mock socket */
+    will_return (__wrap_g_socket_connection_get_socket, TEST_SOCKET);
+    /* setup getter to return our mock fd */
+    will_return (__wrap_g_socket_get_fd, TEST_FD);
+    /* setup poll to succeed w/ data ready */
+    will_return (__wrap_poll, POLLIN); // data ready
+    will_return (__wrap_poll, 0); // errno
+    will_return (__wrap_poll, 1); // return value
+    /* setup getter to return our mock connection */
+    will_return (__wrap_g_io_stream_get_input_stream, TEST_CONNECTION);
+    /* setup read to produce the header */
+    will_return (__wrap_g_input_stream_read, TPM_HEADER_SIZE);
+    will_return (__wrap_g_input_stream_read, buf_in);
+
+    /* index into buf_in where we cause the short read to happen */
+    short_index = get_command_size (buf_in) - 5;
+
+    /* second read */
+    /* setup getter to return our mock socket */
+    will_return (__wrap_g_socket_connection_get_socket, TEST_SOCKET);
+    /* setup getter to return our mock fd */
+    will_return (__wrap_g_socket_get_fd, TEST_FD);
+    /* setup poll to succeed w/ data ready */
+    will_return (__wrap_poll, POLLIN); // data ready
+    will_return (__wrap_poll, 0); // errno
+    will_return (__wrap_poll, 1); // return value
+    /* setup getter to return our mock connection */
+    will_return (__wrap_g_io_stream_get_input_stream, TEST_CONNECTION);
+    /* setup read to produce the FIRST HALF of the header */
+    will_return (__wrap_g_input_stream_read, short_index - TPM_HEADER_SIZE);
+    will_return (__wrap_g_input_stream_read, &buf_in [TPM_HEADER_SIZE]);
+
+    /* third read */
+    /* setup getter to return our mock socket */
+    will_return (__wrap_g_socket_connection_get_socket, TEST_SOCKET);
+    /* setup getter to return our mock fd */
+    will_return (__wrap_g_socket_get_fd, TEST_FD);
+    /* setup poll to succeed w/ data ready */
+    will_return (__wrap_poll, POLLIN); // data ready
+    will_return (__wrap_poll, 0); // errno
+    will_return (__wrap_poll, 1); // return value
+    /* setup getter to return our mock connection */
+    will_return (__wrap_g_io_stream_get_input_stream, TEST_CONNECTION);
+    /* setup read to produce the FIRST HALF of the header */
+    will_return (__wrap_g_input_stream_read, 5);
+    will_return (__wrap_g_input_stream_read, &buf_in [short_index]);
+
+    /* read_tpm_buffer_alloc: This test tries to read sizeof (buf_in) bytes
+       from a mock GSocketConnection using the read_tpm_buffer_alloc
+       function. We mocked up the plumbing above to cause a short read in
+       the body of the TPM command we're trying to read, with the rest of
+       the body read on the second read from the socket. We expect the
+       function under test to deal with these two reads transparently. It
+       should return the expected bytes from buf_in.
+     */
+    uint8_t *buf_out = NULL;
+    buf_out = read_tpm_buffer_alloc (data->sock_con, &buf_size);
+    assert_non_null (buf_out);
+    assert_int_equal (get_command_size (buf_in), buf_size);
 }
 
 gint
 main (void)
 {
     const struct CMUnitTest tests[] = {
+        cmocka_unit_test (g_debug_bytes_max),
         cmocka_unit_test (write_in_one),
         cmocka_unit_test (write_in_two),
         cmocka_unit_test (write_in_three),
         cmocka_unit_test (write_error),
         cmocka_unit_test (write_zero),
+        cmocka_unit_test (gerror_code_to_tcti_rc_no_connection),
+        cmocka_unit_test (gerror_code_to_tcti_rc_io_error),
+        cmocka_unit_test (poll_fd_fd_ready_pollin),
+        cmocka_unit_test (poll_fd_fd_ready_pollpri),
+        cmocka_unit_test (poll_fd_fd_ready_pollrdhup),
+        cmocka_unit_test (poll_fd_timeout),
+        cmocka_unit_test (poll_fd_error),
         cmocka_unit_test (create_socket_pair_success_test),
-        /* read_data tests */
-        cmocka_unit_test_setup_teardown (read_data_success_test,
+        cmocka_unit_test (create_socket_pair_fail),
+        cmocka_unit_test (errno_to_tcti_rc_no_connection),
+        cmocka_unit_test (errno_to_tcti_rc_success),
+        cmocka_unit_test (errno_to_tcti_rc_eagain),
+        cmocka_unit_test (errno_to_tcti_rc_eio),
+        /* read_with_timeout */
+        cmocka_unit_test_setup_teardown (read_with_timeout_poll_timeout,
                                          read_data_setup,
                                          read_data_teardown),
-        cmocka_unit_test_setup_teardown (read_data_short_success_test,
+        cmocka_unit_test_setup_teardown (read_with_timeout_poll_fail,
                                          read_data_setup,
                                          read_data_teardown),
-        cmocka_unit_test_setup_teardown (read_data_short_err_test,
+        cmocka_unit_test_setup_teardown (read_with_timeout_eof,
                                          read_data_setup,
                                          read_data_teardown),
-        cmocka_unit_test_setup_teardown (read_data_error_test,
+        cmocka_unit_test_setup_teardown (read_with_timeout_block_error,
                                          read_data_setup,
                                          read_data_teardown),
-        cmocka_unit_test_setup_teardown (read_data_eof_test,
+        cmocka_unit_test_setup_teardown (read_with_timeout_short,
                                          read_data_setup,
                                          read_data_teardown),
-        /* read_tpm_buf tests */
-        cmocka_unit_test_setup_teardown (read_tpm_buf_success_test,
-                                         read_data_setup,
-                                         read_data_teardown),
-        cmocka_unit_test_setup_teardown (read_tpm_buf_header_only_success_test,
-                                         read_data_setup,
-                                         read_data_teardown),
-        cmocka_unit_test_setup_teardown (read_tpm_buf_short_header_test,
-                                         read_data_setup,
-                                         read_data_teardown),
-        cmocka_unit_test_setup_teardown (read_tpm_buf_lt_header_test,
-                                         read_data_setup,
-                                         read_data_teardown),
-        cmocka_unit_test_setup_teardown (read_tpm_buf_lt_body_test,
-                                         read_data_setup,
-                                         read_data_teardown),
-        cmocka_unit_test_setup_teardown (read_tpm_buf_short_body_test,
-                                         read_data_setup,
-                                         read_data_teardown),
-        cmocka_unit_test_setup_teardown (read_tpm_buf_populated_header_half_test,
-                                         read_data_setup,
-                                         read_data_teardown),
-        cmocka_unit_test_setup_teardown (read_tpm_buf_populated_header_only_test,
-                                         read_data_setup,
-                                         read_data_teardown),
-        cmocka_unit_test_setup_teardown (read_tpm_buf_populated_body_test,
+        cmocka_unit_test_setup_teardown (read_with_timeout_success,
                                          read_data_setup,
                                          read_data_teardown),
         /* read_tpm_buffer_alloc*/
@@ -731,6 +784,12 @@ main (void)
                                          read_data_setup,
                                          read_data_teardown),
         cmocka_unit_test_setup_teardown (read_tpm_buf_alloc_eof_test,
+                                         read_data_setup,
+                                         read_data_teardown),
+        cmocka_unit_test_setup_teardown (read_tpm_buf_alloc_short_read_header,
+                                         read_data_setup,
+                                         read_data_teardown),
+        cmocka_unit_test_setup_teardown (read_tpm_buf_alloc_short_read_body,
                                          read_data_setup,
                                          read_data_teardown),
     };

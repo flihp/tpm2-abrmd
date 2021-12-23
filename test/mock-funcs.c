@@ -9,8 +9,30 @@
 #include <poll.h>
 #include <sys/socket.h>
 
+#include <util.h>
+
 #include "mock-funcs.h"
 
+int
+__real_socketpair (int domain,
+                   int type,
+                   int protocol,
+                   int sv[2]);
+int
+__wrap_socketpair (int domain,
+                   int type,
+                   int protocol,
+                   int sv[2])
+{
+    UNUSED_PARAM(domain);
+    UNUSED_PARAM(type);
+    UNUSED_PARAM(protocol);
+
+    sv [0] = mock_type (int);
+    sv [1] = mock_type (int);
+
+    return mock_type (int);
+}
 int
 __real_poll (struct pollfd *fds,
              nfds_t nfds,
@@ -105,6 +127,10 @@ __wrap_g_input_stream_read (GInputStream *stream,
                                            error);
     } else {
         resp_size = mock_type (gssize);
+        if (resp_size > 0 && (gsize)resp_size > count) {
+            g_error ("g_input_stream_read will never return more bytes "
+                     "than the caller requested");
+        }
         if (resp_size > 0) {
             resp = mock_type (uint8_t*);
             memcpy (buffer, resp, resp_size);
@@ -112,5 +138,18 @@ __wrap_g_input_stream_read (GInputStream *stream,
             *error = mock_type (GError*);
         }
         return resp_size;
+    }
+}
+GTypeInstance*
+__real_g_type_check_instance_cast (GTypeInstance *type_instance,
+                                    GType          iface_type);
+GTypeInstance*
+__wrap_g_type_check_instance_cast (GTypeInstance *type_instance,
+                                    GType          iface_type)
+{
+    if (type_instance != (GTypeInstance*)TEST_CONNECTION) {
+        return __real_g_type_check_instance_cast (type_instance, iface_type);
+    } else {
+        return type_instance;
     }
 }

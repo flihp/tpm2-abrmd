@@ -28,21 +28,17 @@ typedef struct connection_test_data {
  * Data goes in the iostream_in, and out the iostream_out.
  */
 static int
-write_read (GIOStream  *iostream_in,
-            GIOStream  *iostream_out,
+write_read (GInputStream  *istream,
+            GOutputStream  *ostream,
             const char *buf,
             ssize_t      length)
 {
     char out_buf[256] = { 0 };
     ssize_t ret;
-    GInputStream *istream;
-    GOutputStream *ostream;
 
-    ostream = g_io_stream_get_output_stream (iostream_in);
     ret = g_output_stream_write (ostream, buf, length, NULL, NULL);
     if (ret != length)
         g_error ("error writing to fds[1]: %s", strerror (errno));
-    istream = g_io_stream_get_input_stream (iostream_out);
     ret = g_input_stream_read (istream, out_buf, length, NULL, NULL);
     if (ret != length)
         g_error ("error reading from fds[0]: %s", strerror (errno));
@@ -56,14 +52,14 @@ connection_allocate_test (void **state)
     HandleMap   *handle_map = NULL;
     Connection *connection = NULL;
     gint client_fd;
-    GIOStream *iostream;
+    GSocketConnection *socket_con;
     UNUSED_PARAM(state);
 
     handle_map = handle_map_new (TPM2_HT_TRANSIENT, MAX_ENTRIES_DEFAULT);
-    iostream = create_connection_iostream (&client_fd);
-    connection = connection_new (iostream, 0, handle_map);
+    socket_con = create_socket_connection (&client_fd);
+    connection = connection_new (socket_con, 0, handle_map);
     g_object_unref (handle_map);
-    g_object_unref (iostream);
+    g_object_unref (socket_con);
     assert_non_null (connection);
     assert_true (client_fd >= 0);
     g_object_unref (connection);
@@ -75,15 +71,15 @@ connection_setup (void **state)
     connection_test_data_t *data = NULL;
     HandleMap *handle_map = NULL;
     int client_fd;
-    GIOStream *iostream;
+    GSocketConnection *socket_con;
     GSocket *socket;
 
     data = calloc (1, sizeof (connection_test_data_t));
     assert_non_null (data);
     handle_map = handle_map_new (TPM2_HT_TRANSIENT, MAX_ENTRIES_DEFAULT);
-    iostream = create_connection_iostream (&client_fd);
-    data->connection = connection_new (iostream, 0, handle_map);
-    g_object_unref (iostream);
+    socket_con = create_socket_connection (&client_fd);
+    data->connection = connection_new (socket_con, 0, handle_map);
+    g_object_unref (socket_con);
     socket = g_socket_new_from_fd (client_fd, NULL);
     data->client_iostream =
         G_IO_STREAM (g_socket_connection_factory_create_connection (socket));
@@ -113,8 +109,7 @@ connection_key_socket_test (void **state)
     gpointer *key = NULL;
 
     key = connection_key_istream (connection);
-    assert_ptr_equal (g_io_stream_get_input_stream (connection->iostream),
-                                                    key);
+    assert_ptr_equal (connection_get_istream (connection), key);
 }
 
 static void
@@ -138,7 +133,10 @@ connection_client_to_server_test (void ** state)
     connection_test_data_t *data = (connection_test_data_t*)*state;
     gint ret = 0;
 
-    ret = write_read (data->connection->iostream, data->client_iostream, "test", strlen ("test"));
+    ret = write_read (connection_get_istream (data->connection),
+                      g_io_stream_get_output_stream (data->client_iostream),
+                      "test",
+                      strlen ("test"));
     if (ret == -1)
         g_print ("write_read failed: %d\n", ret);
     assert_int_equal (ret, strlen ("test"));
@@ -153,8 +151,8 @@ connection_server_to_client_test (void **state)
     connection_test_data_t *data = (connection_test_data_t*)*state;
     gint ret = 0;
 
-    ret = write_read (data->client_iostream,
-                      data->connection->iostream,
+    ret = write_read (g_io_stream_get_input_stream(data->client_iostream),
+                      connection_get_ostream (data->connection),
                       "test",
                       strlen ("test"));
     if (ret == -1)

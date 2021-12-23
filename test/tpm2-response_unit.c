@@ -33,17 +33,17 @@ tpm2_response_setup_base (void **state)
     test_data_t *data   = NULL;
     gint         client_fd;
     HandleMap   *handle_map;
-    GIOStream   *iostream;
+    GSocketConnection *socket_con;
 
     data = calloc (1, sizeof (test_data_t));
     /* allocate a buffer large enough to hold a TPM2 header and a handle */
     data->buffer_size = TPM_RESPONSE_HEADER_SIZE + sizeof (TPM2_HANDLE);
     data->buffer   = calloc (1, data->buffer_size);
     handle_map = handle_map_new (TPM2_HT_TRANSIENT, MAX_ENTRIES_DEFAULT);
-    iostream = create_connection_iostream (&client_fd);
-    data->connection  = connection_new (iostream, 0, handle_map);
+    socket_con = create_socket_connection (&client_fd);
+    data->connection  = connection_new (socket_con, 0, handle_map);
     g_object_unref (handle_map);
-    g_object_unref (iostream);
+    g_object_unref (socket_con);
 
     *state = data;
     return 0;
@@ -233,16 +233,16 @@ tpm2_response_new_rc_setup (void **state)
 {
     test_data_t *data   = NULL;
     gint         client_fd;
-    GIOStream   *iostream;
+    GSocketConnection *socket_con;
     HandleMap   *handle_map;
 
     data = calloc (1, sizeof (test_data_t));
     /* allocate a buffer large enough to hold a TPM2 header */
     handle_map = handle_map_new (TPM2_HT_TRANSIENT, MAX_ENTRIES_DEFAULT);
-    iostream = create_connection_iostream (&client_fd);
-    data->connection  = connection_new (iostream, 0, handle_map);
+    socket_con = create_socket_connection (&client_fd);
+    data->connection  = connection_new (socket_con, 0, handle_map);
     g_object_unref (handle_map);
-    g_object_unref (iostream);
+    g_object_unref (socket_con);
     data->response = tpm2_response_new_rc (data->connection, TPM2_RC_BINDING);
 
     *state = data;

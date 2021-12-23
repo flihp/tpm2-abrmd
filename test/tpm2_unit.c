@@ -227,17 +227,17 @@ tpm2_setup_with_command (void **state)
     guint8 *buffer;
     size_t  buffer_size;
     HandleMap *handle_map;
-    GIOStream *iostream;
+    GSocketConnection *sock_con;
 
     tpm2_setup_with_init (state);
     data = (test_data_t*)*state;
     buffer_size = TPM_HEADER_SIZE;
     buffer = calloc (1, buffer_size);
     handle_map = handle_map_new (TPM2_HT_TRANSIENT, MAX_ENTRIES_DEFAULT);
-    iostream = create_connection_iostream (&client_fd);
-    data->connection = connection_new (iostream, 0, handle_map);
+    sock_con = create_socket_connection (&client_fd);
+    data->connection = connection_new (sock_con, 0, handle_map);
     g_object_unref (handle_map);
-    g_object_unref (iostream);
+    g_object_unref (sock_con);
     data->command = tpm2_command_new (data->connection,
                                       buffer,
                                       buffer_size,

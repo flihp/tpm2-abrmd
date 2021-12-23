@@ -3,6 +3,7 @@
  * Copyright (c) 2017, Intel Corporation
  * All rights reserved.
  */
+#include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <gio/gunixinputstream.h>
@@ -19,6 +20,12 @@
 #include "random.h"
 #include "util.h"
 #include "tpm2-header.h"
+
+#if defined(__FreeBSD__)
+#ifndef POLLRDHUP
+#define POLLRDHUP 0x0
+#endif
+#endif
 
 /**
  * This is a wrapper around g_debug to dump a binary buffer in a human
@@ -102,107 +109,157 @@ write_all (GOutputStream *ostream,
     return (ssize_t)written_total;
 }
 /*
- * Read data from a GSocket.
- * Parameters:
- *   socket:  A connected GSocket.
- *   *index:  A reference to the location in the buffer where data will be
- *            written. This reference is updated to the end of the location
- *            where data is written.
- *   buf:      destination buffer
- *   count:    number of bytes to read
- * Returns:
- *   -1:     when EOF is reached
- *   0:      if requested number of bytes received
- *   errno:  in the event of an error from the 'read' call
- * NOTE: The caller must ensure that 'buf' is large enough to hold count
- *       bytes.
+ * This function maps errno values to TCTI RCs.
  */
-int
-read_data (GInputStream  *istream,
-           size_t        *index,
-           uint8_t       *buf,
-           size_t         count)
+TSS2_RC
+errno_to_tcti_rc (int error_number)
 {
-    ssize_t num_read = 0;
-    size_t bytes_left = count;
-    gint error_code;
-    GError *error = NULL;
-
-    g_assert (index != NULL);
-    do {
-        g_debug ("%s: reading %zu bytes from istream", __func__,  bytes_left);
-        num_read = g_input_stream_read (istream,
-                                        (gchar*)&buf [*index],
-                                        bytes_left,
-                                        NULL,
-                                        &error);
-        if (num_read > 0) {
-            g_debug ("successfully read %zd bytes", num_read);
-            g_debug_bytes ((uint8_t*)&buf [*index], num_read, 16, 4);
-            /* Advance index by the number of bytes read. */
-            *index += num_read;
-            bytes_left -= num_read;
-        } else if (num_read == 0) {
-            g_debug ("read produced EOF");
-            return -1;
-        } else { /* num_read < 0 */
-            g_assert (error != NULL);
-            g_warning ("%s: read on istream produced error: %s", __func__,
-                       error->message);
-            error_code = error->code;
-            g_error_free (error);
-            return error_code;
-        }
-    } while (bytes_left);
-
-    return 0;
+    switch (error_number) {
+    case -1:
+        return TSS2_TCTI_RC_NO_CONNECTION;
+    case 0:
+        return TSS2_RC_SUCCESS;
+    case EAGAIN:
+#if EAGAIN != EWOULDBLOCK
+    case EWOULDBLOCK:
+#endif
+        return TSS2_TCTI_RC_TRY_AGAIN;
+    case EIO:
+        return TSS2_TCTI_RC_IO_ERROR;
+    default:
+        g_debug ("mapping errno %d with message \"%s\" to "
+                 "TSS2_TCTI_RC_GENERAL_FAILURE",
+                 error_number, strerror (error_number));
+        return TSS2_TCTI_RC_GENERAL_FAILURE;
+    }
 }
 /*
- * This function attempts to read a TPM2 command or response into the provided
- * buffer. It specifically handles the details around reading the command /
- * response header, determining the size of the data that it needs to read and
- * keeping track of past / partial reads.
+ * This function maps GError code values to TCTI RCs.
+ */
+TSS2_RC
+gerror_code_to_tcti_rc (int error_number)
+{
+    switch (error_number) {
+    case -1:
+        return TSS2_TCTI_RC_NO_CONNECTION;
+    case G_IO_ERROR_WOULD_BLOCK:
+        return TSS2_TCTI_RC_TRY_AGAIN;
+    case G_IO_ERROR_FAILED:
+    case G_IO_ERROR_HOST_UNREACHABLE:
+    case G_IO_ERROR_NETWORK_UNREACHABLE:
+#if G_IO_ERROR_BROKEN_PIPE != G_IO_ERROR_CONNECTION_CLOSED
+    case G_IO_ERROR_CONNECTION_CLOSED:
+#endif
+#if GLIB_MAJOR_VERSION == 2 && GLIB_MINOR_VERSION >= 44
+    case G_IO_ERROR_NOT_CONNECTED:
+#endif
+        return TSS2_TCTI_RC_IO_ERROR;
+    default:
+        g_debug ("mapping errno %d with message \"%s\" to "
+                 "TSS2_TCTI_RC_GENERAL_FAILURE",
+                 error_number, strerror (error_number));
+        return TSS2_TCTI_RC_GENERAL_FAILURE;
+    }
+}
+/*
+ * This is a thin wrapper around a call to poll. It packages up the provided
+ * file descriptor and timeout and polls on that same FD for data or a hangup.
  * Returns:
- *   -1: If the underlying syscall results in an EOF
- *   0: If data is successfully read.
- *      NOTE: The index will be updated to the size of the command buffer.
- *   errno: In the event of an error from the underlying 'read' syscall.
- *   EPROTO: If buf_size is less than the size from the command buffer.
+ *   -1 on timeout
+ *   0 when data is ready
+ *   errno on error
  */
 int
-read_tpm_buffer (GInputStream             *istream,
-                 size_t                   *index,
-                 uint8_t                  *buf,
-                 size_t                    buf_size)
+poll_fd (int        fd,
+         int32_t    timeout)
 {
-    ssize_t ret = 0;
-    uint32_t size = 0;
+    struct pollfd pollfds [] = {
+        {
+            .fd = fd,
+             .events = POLLIN | POLLPRI | POLLRDHUP,
+        }
+    };
+    int ret;
+    int errno_tmp;
 
-    /* if the buf_size isn't at least large enough to hold the header */
-    if (buf_size < TPM_HEADER_SIZE) {
-        return EPROTO;
+    ret = TABRMD_ERRNO_EINTR_RETRY (poll (pollfds,
+                                    sizeof (pollfds) / sizeof (struct pollfd),
+                                    timeout));
+    errno_tmp = errno;
+    switch (ret) {
+    case -1:
+        g_warning ("poll produced error: %d, %s",
+                   errno_tmp, strerror (errno_tmp));
+        return errno_tmp;
+    case 0:
+        g_debug ("poll timed out after %" PRId32 " milliseconds", timeout);
+        return -1;
+    default:
+        g_debug ("poll has %d fds ready", ret);
+        if (pollfds[0].revents & POLLIN) {
+            g_debug ("  POLLIN");
+        }
+        if (pollfds[0].revents & POLLPRI) {
+            g_debug ("  POLLPRI");
+        }
+        if (pollfds[0].revents & POLLRDHUP) {
+            g_debug ("  POLLRDHUP");
+        }
+        return 0;
     }
-    /* If we don't have the whole header yet try to get it. */
-    if (*index < TPM_HEADER_SIZE) {
-        ret = read_data (istream, index, buf, TPM_HEADER_SIZE - *index);
-        if (ret != 0) {
-            /* Pass errors up to the caller. */
-            return ret;
+}
+
+/* poll for data with timeout, then read as much as you can up to size */
+TSS2_RC
+read_with_timeout (GSocketConnection *connection,
+                   uint8_t *buf,
+                   size_t size,
+                   size_t *index,
+                   int32_t timeout)
+{
+    GError *error = NULL;
+    ssize_t num_read;
+    int ret;
+
+    ret = poll_fd (g_socket_get_fd (g_socket_connection_get_socket (connection)), timeout);
+    switch (ret) {
+    case -1:
+        /* using TRY_AGAIN here prevents us from differentiating timeout on
+           poll from a short read */
+        return TSS2_TCTI_RC_TRY_AGAIN;
+    case 0:
+        break;
+    default:
+        return errno_to_tcti_rc (ret);
+    }
+
+    num_read = g_input_stream_read (g_io_stream_get_input_stream (G_IO_STREAM (connection)),
+                                    (gchar*)&buf [*index],
+                                    size,
+                                    NULL,
+                                    &error);
+    switch (num_read) {
+    case 0:
+        return TSS2_TCTI_RC_NO_CONNECTION;
+    case -1:
+        g_assert (error != NULL);
+        g_warning ("%s: read on istream produced error: %s", __func__,
+                   error->message);
+        ret = error->code;
+        g_error_free (error);
+        return gerror_code_to_tcti_rc (ret);
+    default:
+        g_debug ("successfully read %zd bytes", num_read);
+        g_debug_bytes (&buf [*index], num_read, 16, 4);
+        /* Advance index by the number of bytes read. */
+        *index += num_read;
+        /* short read means try again */
+        if (size - num_read > 0) {
+            return TSS2_TCTI_RC_TRY_AGAIN;
+        } else {
+            return TSS2_RC_SUCCESS;
         }
     }
-
-    /* Once we have the header we can get the size of the whole blob. */
-    size = get_command_size (buf);
-    /* If size from header is size of header, there's nothing more to read. */
-    if (size == TPM_HEADER_SIZE) {
-        return ret;
-    }
-    /* Not enough space in buf to for data in the buffer (header.size). */
-    if (size > buf_size) {
-        return EPROTO;
-    }
-    /* Now that we have the header, we know the whole buffer size. Get it. */
-    return read_data (istream, index, buf, size - *index);
 }
 /*
  * This fucntion is a wrapper around the read_tpm_buffer function above. It
@@ -213,39 +270,52 @@ read_tpm_buffer (GInputStream             *istream,
  *   parameter on success.
  */
 uint8_t*
-read_tpm_buffer_alloc (GInputStream *istream,
+read_tpm_buffer_alloc (GSocketConnection *sock_con,
                        size_t       *buf_size)
 {
     uint8_t *buf = NULL;
-    size_t   size_tmp = TPM_HEADER_SIZE, index = 0;
-    int ret = 0;
+    size_t size = 0, index = 0;
+    TSS2_RC rc = TSS2_RC_SUCCESS;
 
-    if (istream == NULL || buf_size == NULL) {
-        g_warning ("%s: got null parameter", __func__);
-        return NULL;
+    assert (connection);
+    assert (buf_size);
+
+    buf = g_malloc0 (TPM_HEADER_SIZE);
+    rc = RETRY_EXP(read_with_timeout (sock_con,
+                                      buf,
+                                      TPM_HEADER_SIZE - index,
+                                      &index,
+                                      TSS2_TCTI_TIMEOUT_BLOCK));
+    if (rc != TSS2_RC_SUCCESS) {
+        goto err_out;
     }
-    do {
-        buf = g_realloc (buf, size_tmp);
-        ret = read_tpm_buffer (istream, &index, buf, size_tmp);
-        switch (ret) {
-        case EPROTO:
-            size_tmp = get_command_size (buf);
-            if (size_tmp < TPM_HEADER_SIZE || size_tmp > UTIL_BUF_MAX) {
-                g_warning ("%s: tpm buffer size is ouside of acceptable bounds: %zd",
-                           __func__, size_tmp);
-                goto err_out;
-            }
-            break;
-        case 0:
-            /* done */
-            break;
-        default:
-            goto err_out;
-        }
-    } while (ret == EPROTO);
+
+    size = get_command_size (buf);
+    g_debug ("read_with_timeout size: %zd", size);
+    if (size == TPM_HEADER_SIZE) {
+        g_debug ("no command body to read, header only");
+        goto out;
+    }
+    if (size < TPM_HEADER_SIZE || size > UTIL_BUF_MAX) {
+        g_warning ("%s: tpm buffer size is ouside of acceptable bounds: %zd",
+                   __func__, size);
+        goto err_out;
+    }
+
+    g_debug ("g_realloc buf: %p, size: %zd", buf, size);
+    buf = g_realloc (buf, size);
+    rc = RETRY_EXP(read_with_timeout (sock_con,
+                                      buf,
+                                      size - index,
+                                      &index,
+                                      TSS2_TCTI_TIMEOUT_BLOCK));
+    if (rc != TSS2_RC_SUCCESS) {
+        goto err_out;
+    }
+out:
     g_debug ("%s: read TPM buffer of size: %zd", __func__, index);
     g_debug_bytes (buf, index, 16, 4);
-    *buf_size = size_tmp;
+    *buf_size = size;
     return buf;
 err_out:
     g_debug ("%s: err_out freeing buffer", __func__);
@@ -255,15 +325,14 @@ err_out:
     return NULL;
 }
 /*
- * Create a GSocket for use by the daemon for communicating with the client.
  * The client end of the socket is returned through the client_fd
  * parameter.
  */
-GIOStream*
-create_connection_iostream (int *client_fd)
+GSocketConnection*
+create_socket_connection (int *client_fd)
 {
-    GIOStream *iostream;
-    GSocket *sock;
+    GSocketConnection *socket_con;
+    GSocket *socket;
     int server_fd, ret;
 
     ret = create_socket_pair (client_fd,
@@ -272,10 +341,10 @@ create_connection_iostream (int *client_fd)
     if (ret == -1) {
         g_error ("CreateConnection failed to make fd pair %s", strerror (errno));
     }
-    sock = g_socket_new_from_fd (server_fd, NULL);
-    iostream = G_IO_STREAM (g_socket_connection_factory_create_connection (sock));
-    g_object_unref (sock);
-    return iostream;
+    socket = g_socket_new_from_fd (server_fd, NULL);
+    socket_con = g_socket_connection_factory_create_connection (socket);
+    g_object_unref (socket);
+    return socket_con;
 }
 /*
  * Create a socket and return the fds for both ends of the communication
