@@ -23,97 +23,7 @@
 #include "tcti-tabrmd-priv.h"
 #include "mock-funcs.h"
 
-/*
- * This tests the tcti_tabrmd_poll function, ensuring that it returns the
- * expected response code for the POLIN event.
- */
-static void
-tcti_tabrmd_poll_fd_ready_pollin (void **state)
-{
-    UNUSED_PARAM (state);
-    int ret;
 
-    will_return (__wrap_poll, POLLIN);
-    will_return (__wrap_poll, 0);
-    will_return (__wrap_poll, 1);
-
-    ret = tcti_tabrmd_poll (TEST_FD, TSS2_TCTI_TIMEOUT_BLOCK);
-    assert_int_equal (ret, 0);
-}
-/*
- * This tests the tcti_tabrmd_poll function, ensuring that it returns the
- * expected response code for the POLLPRI event.
- */
-static void
-tcti_tabrmd_poll_fd_ready_pollpri (void **state)
-{
-    UNUSED_PARAM (state);
-    int ret;
-
-    will_return (__wrap_poll, POLLPRI);
-    will_return (__wrap_poll, 0);
-    will_return (__wrap_poll, 1);
-
-    ret = tcti_tabrmd_poll (TEST_FD, TSS2_TCTI_TIMEOUT_BLOCK);
-    assert_int_equal (ret, 0);
-}
-/*
- * This tests the tcti_tabrmd_poll function, ensuring that it returns the
- * expected response code for the POLLRDHUP event.
- */
-
-#if defined(__FreeBSD__)
-#ifndef POLLRDHUP
-#define POLLRDHUP 0x0
-#endif
-#endif
-static void
-tcti_tabrmd_poll_fd_ready_pollrdhup (void **state)
-{
-    UNUSED_PARAM (state);
-    int ret;
-
-    will_return (__wrap_poll, POLLRDHUP);
-    will_return (__wrap_poll, 0);
-    will_return (__wrap_poll, 1);
-
-    ret = tcti_tabrmd_poll (TEST_FD, TSS2_TCTI_TIMEOUT_BLOCK);
-    assert_int_equal (ret, 0);
-}
-/*
- * This tests the tcti_tabrmd_poll function, ensuring that it returns the
- * expected response code when a timeout occurs.
- */
-static void
-tcti_tabrmd_poll_timeout (void **state)
-{
-    UNUSED_PARAM (state);
-    int ret;
-
-    will_return (__wrap_poll, 0);
-    will_return (__wrap_poll, 0);
-    will_return (__wrap_poll, 0);
-
-    ret = tcti_tabrmd_poll (TEST_FD, TSS2_TCTI_TIMEOUT_BLOCK);
-    assert_int_equal (ret, -1);
-}
-/*
- * This tests the tcti_tabrmd_poll function, ensuring that it returns the
- * expected response when an error occurs.
- */
-static void
-tcti_tabrmd_poll_error (void **state)
-{
-    UNUSED_PARAM (state);
-    int ret;
-
-    will_return (__wrap_poll, 0);
-    will_return (__wrap_poll, EINVAL);
-    will_return (__wrap_poll, -1);
-
-    ret = tcti_tabrmd_poll (TEST_FD, TSS2_TCTI_TIMEOUT_BLOCK);
-    assert_int_equal (ret, EINVAL);
-}
 /*
  * This is the setup function used to create a skeletal / minimal context
  * for testing purposes.
@@ -172,16 +82,14 @@ tcti_tabrmd_read_poll_timeout (void **state)
     TSS2_RC rc;
     uint8_t resp [TPM2_MAX_RESPONSE_SIZE] = { 0, };
     size_t resp_size = sizeof (resp);
-    uint32_t timeout = TSS2_TCTI_TIMEOUT_BLOCK;
+    uint32_t timeout = 1000;
     TSS2_TCTI_TABRMD_CONTEXT *tcti_ctx = (TSS2_TCTI_TABRMD_CONTEXT*)*state;
 
     will_return (__wrap_g_socket_connection_get_socket, TEST_SOCKET);
-    will_return (__wrap_g_socket_get_fd, TEST_FD);
 
     /* prime mock stack for poll, will return 0 indicating timeout */
-    will_return (__wrap_poll, 0);
-    will_return (__wrap_poll, 0);
-    will_return (__wrap_poll, 0);
+    will_return (__wrap_g_socket_condition_timed_wait, FALSE);
+    will_return (__wrap_g_socket_condition_timed_wait, G_IO_ERROR_TIMED_OUT);
 
     rc = tcti_tabrmd_read (tcti_ctx, resp, resp_size, timeout);
     assert_int_equal (rc, TSS2_TCTI_RC_TRY_AGAIN);
@@ -196,18 +104,17 @@ tcti_tabrmd_read_poll_fail (void **state)
     TSS2_RC rc;
     uint8_t resp [TPM2_MAX_RESPONSE_SIZE] = { 0, };
     size_t resp_size = sizeof (resp);
-    uint32_t timeout = TSS2_TCTI_TIMEOUT_BLOCK;
+    uint32_t timeout = 1000;
     TSS2_TCTI_TABRMD_CONTEXT *tcti_ctx = (TSS2_TCTI_TABRMD_CONTEXT*)*state;
 
     will_return (__wrap_g_socket_connection_get_socket, TEST_SOCKET);
-    will_return (__wrap_g_socket_get_fd, TEST_FD);
 
-    will_return (__wrap_poll, 0);
-    will_return (__wrap_poll, EINVAL);
-    will_return (__wrap_poll, -1);
+    /* prime mock stack for poll, will return 0 indicating timeout */
+    will_return (__wrap_g_socket_condition_timed_wait, FALSE);
+    will_return (__wrap_g_socket_condition_timed_wait, G_IO_ERROR_CLOSED);
 
     rc = tcti_tabrmd_read (tcti_ctx, resp, resp_size, timeout);
-    assert_int_equal (rc, TSS2_TCTI_RC_GENERAL_FAILURE);
+    assert_int_equal (rc, TSS2_TCTI_RC_IO_ERROR);
 }
 /*
  * This test ensures that a call to tcti_tabrmd_read that causes
@@ -224,12 +131,9 @@ tcti_tabrmd_read_eof (void **state)
 
     /* mock stack required to extract the fd from the GSocketConnection */
     will_return (__wrap_g_socket_connection_get_socket, TEST_SOCKET);
-    will_return (__wrap_g_socket_get_fd, TEST_FD);
 
     /* prime mock stack for poll to indicate data is ready */
-    will_return (__wrap_poll, POLLIN);
-    will_return (__wrap_poll, 0);
-    will_return (__wrap_poll, 1);
+    will_return (__wrap_g_socket_condition_timed_wait, TRUE);
 
     /* mock stack required to extract GIStream */
     will_return (__wrap_g_io_stream_get_input_stream, TEST_CONNECTION);
@@ -256,12 +160,9 @@ tcti_tabrmd_read_block_error (void **state)
 
     /* mock stack required to extract the fd from the GSocketConnection */
     will_return (__wrap_g_socket_connection_get_socket, TEST_SOCKET);
-    will_return (__wrap_g_socket_get_fd, TEST_FD);
 
     /* prime mock stack for poll to indicate data is ready */
-    will_return (__wrap_poll, POLLIN);
-    will_return (__wrap_poll, 0);
-    will_return (__wrap_poll, 1);
+    will_return (__wrap_g_socket_condition_timed_wait, TRUE);
 
     /* mock stack required to extract GIStream & read data */
     will_return (__wrap_g_io_stream_get_input_stream, TEST_CONNECTION);
@@ -289,12 +190,9 @@ tcti_tabrmd_read_short (void **state)
 
     /* mock stack required to extract the fd from the GSocketConnection */
     will_return (__wrap_g_socket_connection_get_socket, TEST_SOCKET);
-    will_return (__wrap_g_socket_get_fd, TEST_FD);
 
     /* prime mock stack for poll to indicate data is ready */
-    will_return (__wrap_poll, POLLIN);
-    will_return (__wrap_poll, 0);
-    will_return (__wrap_poll, 1);
+    will_return (__wrap_g_socket_condition_timed_wait, TRUE);
 
     /* mock stack required to extract GIStream & read data */
     will_return (__wrap_g_io_stream_get_input_stream, TEST_CONNECTION);
@@ -315,12 +213,10 @@ tcti_tabrmd_read_success (void **state)
     TSS2_TCTI_TABRMD_CONTEXT *tcti_ctx = (TSS2_TCTI_TABRMD_CONTEXT*)*state;
 
     /* prime mock stack for poll to indicate data is ready */
-    will_return (__wrap_poll, POLLIN);
-    will_return (__wrap_poll, 0);
-    will_return (__wrap_poll, 1);
+    will_return (__wrap_g_socket_condition_timed_wait, TRUE);
+
     /* mock stack required to extract the fd from the GSocketConnection */
     will_return (__wrap_g_socket_connection_get_socket, TEST_SOCKET);
-    will_return (__wrap_g_socket_get_fd, TEST_FD);
 
     /* mock stack required to extract GIStream & read data */
     will_return (__wrap_g_io_stream_get_input_stream, TEST_CONNECTION);
@@ -444,15 +340,13 @@ tcti_tabrmd_receive_header_fail (void **state)
 
     /* mock stack required to extract the fd from the GSocketConnection */
     will_return (__wrap_g_socket_connection_get_socket, TEST_SOCKET);
-    will_return (__wrap_g_socket_get_fd, TEST_FD);
 
     /* prime mock stack for poll, will return 0 indicating timeout */
-    will_return (__wrap_poll, 0);
-    will_return (__wrap_poll, EINVAL);
-    will_return (__wrap_poll, -1);
+    will_return (__wrap_g_socket_condition_timed_wait, FALSE);
+    will_return (__wrap_g_socket_condition_timed_wait, G_IO_ERROR_BROKEN_PIPE);;
 
     rc = tss2_tcti_tabrmd_receive (ctx, &size, NULL, TSS2_TCTI_TIMEOUT_BLOCK);
-    assert_int_equal (rc, TSS2_TCTI_RC_GENERAL_FAILURE);
+    assert_int_equal (rc, TSS2_TCTI_RC_IO_ERROR);
 }
 /*
  * This test causes the header to be read successfully, but the size field
@@ -473,11 +367,8 @@ tcti_tabrmd_receive_header_lt_expected (void **state)
 
     /* mock stack required to extract the fd from the GSocketConnection */
     will_return (__wrap_g_socket_connection_get_socket, TEST_SOCKET);
-    will_return (__wrap_g_socket_get_fd, TEST_FD);
     /* prime mock stack for poll to indicate data is ready */
-    will_return (__wrap_poll, POLLIN);
-    will_return (__wrap_poll, 0);
-    will_return (__wrap_poll, 1);
+    will_return (__wrap_g_socket_condition_timed_wait, TRUE);
     /* mock stack required to get 10 bytes back from the GInputStream */
     will_return (__wrap_g_io_stream_get_input_stream, TEST_CONNECTION);
     will_return (__wrap_g_input_stream_read, TPM_HEADER_SIZE);
@@ -506,11 +397,8 @@ tcti_tabrmd_receive_get_size (void **state)
 
     /* mock stack required to extract the fd from the GSocketConnection */
     will_return (__wrap_g_socket_connection_get_socket, TEST_SOCKET);
-    will_return (__wrap_g_socket_get_fd, TEST_FD);
     /* prime mock stack for poll to indicate data is ready */
-    will_return (__wrap_poll, POLLIN);
-    will_return (__wrap_poll, 0);
-    will_return (__wrap_poll, 1);
+    will_return (__wrap_g_socket_condition_timed_wait, TRUE);
     /* mock stack required to get 10 bytes back from the GInputStream */
     will_return (__wrap_g_io_stream_get_input_stream, TEST_CONNECTION);
     will_return (__wrap_g_input_stream_read, TPM_HEADER_SIZE);
@@ -539,11 +427,8 @@ tcti_tabrmd_receive_header_only (void **state)
 
     /* mock stack required to extract the fd from the GSocketConnection */
     will_return (__wrap_g_socket_connection_get_socket, TEST_SOCKET);
-    will_return (__wrap_g_socket_get_fd, TEST_FD);
     /* prime mock stack for poll to indicate data is ready */
-    will_return (__wrap_poll, POLLIN);
-    will_return (__wrap_poll, 0);
-    will_return (__wrap_poll, 1);
+    will_return (__wrap_g_socket_condition_timed_wait, TRUE);
     /* mock stack required to get 10 bytes back from the GInputStream */
     will_return (__wrap_g_io_stream_get_input_stream, TEST_CONNECTION);
     will_return (__wrap_g_input_stream_read, TPM_HEADER_SIZE);
@@ -575,11 +460,8 @@ tcti_tabrmd_receive_header_only_retry (void **state)
 
     /* mock stack required to extract the fd from the GSocketConnection */
     will_return (__wrap_g_socket_connection_get_socket, TEST_SOCKET);
-    will_return (__wrap_g_socket_get_fd, TEST_FD);
     /* prime mock stack for poll to indicate data is ready */
-    will_return (__wrap_poll, POLLIN);
-    will_return (__wrap_poll, 0);
-    will_return (__wrap_poll, 1);
+    will_return (__wrap_g_socket_condition_timed_wait, TRUE);
     /* mock stack required to get first bytes back from the GInputStream */
     will_return (__wrap_g_io_stream_get_input_stream, TEST_CONNECTION);
     will_return (__wrap_g_input_stream_read, FIRST_READ_SIZE);
@@ -590,11 +472,8 @@ tcti_tabrmd_receive_header_only_retry (void **state)
 
     /* mock stack required to extract the fd from the GSocketConnection */
     will_return (__wrap_g_socket_connection_get_socket, TEST_SOCKET);
-    will_return (__wrap_g_socket_get_fd, TEST_FD);
     /* prime mock stack for poll to indicate data is ready */
-    will_return (__wrap_poll, POLLIN);
-    will_return (__wrap_poll, 0);
-    will_return (__wrap_poll, 1);
+    will_return (__wrap_g_socket_condition_timed_wait, TRUE);
     /* mock stack required to get first bytes back from the GInputStream */
     will_return (__wrap_g_io_stream_get_input_stream, TEST_CONNECTION);
     will_return (__wrap_g_input_stream_read, SECOND_READ_SIZE);
@@ -625,11 +504,8 @@ tcti_tabrmd_receive_partial_reads (void **state)
 
     /* mock stack required to extract the fd from the GSocketConnection */
     will_return (__wrap_g_socket_connection_get_socket, TEST_SOCKET);
-    will_return (__wrap_g_socket_get_fd, TEST_FD);
     /* prime mock stack for poll to indicate data is ready */
-    will_return (__wrap_poll, POLLIN);
-    will_return (__wrap_poll, 0);
-    will_return (__wrap_poll, 1);
+    will_return (__wrap_g_socket_condition_timed_wait, TRUE);
     /* mock stack required to get 10 bytes back from the GInputStream */
     will_return (__wrap_g_io_stream_get_input_stream, TEST_CONNECTION);
     will_return (__wrap_g_input_stream_read, TPM_HEADER_SIZE);
@@ -644,11 +520,8 @@ tcti_tabrmd_receive_partial_reads (void **state)
 
     /* mock stack required to extract the fd from the GSocketConnection */
     will_return (__wrap_g_socket_connection_get_socket, TEST_SOCKET);
-    will_return (__wrap_g_socket_get_fd, TEST_FD);
     /* prime mock stack for poll to indicate data is ready */
-    will_return (__wrap_poll, POLLIN);
-    will_return (__wrap_poll, 0);
-    will_return (__wrap_poll, 1);
+    will_return (__wrap_g_socket_condition_timed_wait, TRUE);
     /* mock stack required to get 10 bytes back from the GInputStream */
     will_return (__wrap_g_io_stream_get_input_stream, TEST_CONNECTION);
     will_return (__wrap_g_input_stream_read, 4);
@@ -666,11 +539,6 @@ int
 main (void)
 {
     const struct CMUnitTest tests[] = {
-        cmocka_unit_test (tcti_tabrmd_poll_fd_ready_pollin),
-        cmocka_unit_test (tcti_tabrmd_poll_fd_ready_pollpri),
-        cmocka_unit_test (tcti_tabrmd_poll_fd_ready_pollrdhup),
-        cmocka_unit_test (tcti_tabrmd_poll_timeout),
-        cmocka_unit_test (tcti_tabrmd_poll_error),
         cmocka_unit_test_setup_teardown (tcti_tabrmd_read_poll_timeout,
                                          tcti_tabrmd_setup,
                                          tcti_tabrmd_teardown),

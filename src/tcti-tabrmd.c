@@ -70,31 +70,6 @@ tss2_tcti_tabrmd_transmit (TSS2_TCTI_CONTEXT *context,
     return tss2_ret;
 }
 /*
- * This function maps errno values to TCTI RCs.
- */
-static TSS2_RC
-errno_to_tcti_rc (int error_number)
-{
-    switch (error_number) {
-    case -1:
-        return TSS2_TCTI_RC_NO_CONNECTION;
-    case 0:
-        return TSS2_RC_SUCCESS;
-    case EAGAIN:
-#if EAGAIN != EWOULDBLOCK
-    case EWOULDBLOCK:
-#endif
-        return TSS2_TCTI_RC_TRY_AGAIN;
-    case EIO:
-        return TSS2_TCTI_RC_IO_ERROR;
-    default:
-        g_debug ("mapping errno %d with message \"%s\" to "
-                 "TSS2_TCTI_RC_GENERAL_FAILURE",
-                 error_number, strerror (error_number));
-        return TSS2_TCTI_RC_GENERAL_FAILURE;
-    }
-}
-/*
  * This function maps GError code values to TCTI RCs.
  */
 static TSS2_RC
@@ -123,58 +98,6 @@ gerror_code_to_tcti_rc (int error_number)
     }
 }
 
-#if defined(__FreeBSD__)
-#ifndef POLLRDHUP
-#define POLLRDHUP 0x0
-#endif
-#endif
-/*
- * This is a thin wrapper around a call to poll. It packages up the provided
- * file descriptor and timeout and polls on that same FD for data or a hangup.
- * Returns:
- *   -1 on timeout
- *   0 when data is ready
- *   errno on error
- */
-int
-tcti_tabrmd_poll (int        fd,
-                  int32_t    timeout)
-{
-    struct pollfd pollfds [] = {
-        {
-            .fd = fd,
-             .events = POLLIN | POLLPRI | POLLRDHUP,
-        }
-    };
-    int ret;
-    int errno_tmp;
-
-    ret = TABRMD_ERRNO_EINTR_RETRY (poll (pollfds,
-                                    sizeof (pollfds) / sizeof (struct pollfd),
-                                    timeout));
-    errno_tmp = errno;
-    switch (ret) {
-    case -1:
-        g_debug ("poll produced error: %d, %s",
-                 errno_tmp, strerror (errno_tmp));
-        return errno_tmp;
-    case 0:
-        g_debug ("poll timed out after %" PRId32 " milliseconds", timeout);
-        return -1;
-    default:
-        g_debug ("poll has %d fds ready", ret);
-        if (pollfds[0].revents & POLLIN) {
-            g_debug ("  POLLIN");
-        }
-        if (pollfds[0].revents & POLLPRI) {
-            g_debug ("  POLLPRI");
-        }
-        if (pollfds[0].revents & POLLRDHUP) {
-            g_debug ("  POLLRDHUP");
-        }
-        return 0;
-    }
-}
 /*
  * Read as much of the requested data as possible into the provided buffer.
  * If the read would block, return TSS2_TCTI_RC_TRY_AGAIN (a short read will
@@ -189,16 +112,28 @@ tcti_tabrmd_read (TSS2_TCTI_TABRMD_CONTEXT *ctx,
 {
     GError *error = NULL;
     ssize_t num_read;
-    int ret;
+    gboolean ret;
 
-    ret = tcti_tabrmd_poll (TSS2_TCTI_TABRMD_FD (ctx), timeout);
-    switch (ret) {
-    case -1:
-        return TSS2_TCTI_RC_TRY_AGAIN;
-    case 0:
-        break;
-    default:
-        return errno_to_tcti_rc (ret);
+    ret = g_socket_condition_timed_wait (
+            TSS2_TCTI_TABRMD_SOCKET (ctx),
+                                     G_IO_IN | G_IO_PRI | G_IO_HUP,
+                                     timeout * 1000, // timeout in microseconds, input in miliseconds
+                                     NULL,
+                                     &error);
+    if (!ret) {
+        TSS2_RC rc;
+
+        switch (error->code) {
+        case G_IO_ERROR_TIMED_OUT:
+            rc = TSS2_TCTI_RC_TRY_AGAIN;
+            break;
+        default:
+            rc = TSS2_TCTI_RC_IO_ERROR;
+            break;
+        }
+
+        g_clear_error (&error);
+        return rc;
     }
 
     num_read = g_input_stream_read (TSS2_TCTI_TABRMD_ISTREAM (ctx),

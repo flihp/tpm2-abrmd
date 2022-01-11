@@ -443,7 +443,7 @@ test_tss2_tcti_tabrmd_unit_SOURCES = src/tcti-tabrmd.c test/tss2-tcti-tabrmd_uni
 
 test_tcti_tabrmd_receive_unit_CFLAGS = $(UNIT_CFLAGS) -DG_DISABLE_CAST_CHECKS
 test_tcti_tabrmd_receive_unit_LDADD = $(UNIT_LIBS)
-test_tcti_tabrmd_receive_unit_LDFLAGS = -Wl,--wrap=poll,--wrap=g_socket_connection_get_socket,--wrap=g_socket_get_fd,--wrap=g_input_stream_read,--wrap=g_io_stream_get_input_stream,--wrap=g_input_stream_read
+test_tcti_tabrmd_receive_unit_LDFLAGS = -Wl,--wrap=g_socket_condition_timed_wait,--wrap=g_socket_connection_get_socket,--wrap=g_socket_get_fd,--wrap=g_input_stream_read,--wrap=g_io_stream_get_input_stream,--wrap=g_input_stream_read
 test_tcti_tabrmd_receive_unit_SOURCES = src/tcti-tabrmd.c test/tcti-tabrmd-receive_unit.c
 endif
 

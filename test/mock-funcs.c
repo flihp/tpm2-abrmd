@@ -11,23 +11,38 @@
 
 #include "mock-funcs.h"
 
-int
-__real_poll (struct pollfd *fds,
-             nfds_t nfds,
-             int timeout);
-int
-__wrap_poll (struct pollfd *fds,
-             nfds_t nfds,
-             int timeout)
+gboolean __real_g_socket_condition_timed_wait (GSocket *socket,
+                                               GIOCondition condition,
+                                               gint64 timeout,
+                                               GCancellable *cancellable,
+                                               GError **error);
+gboolean
+__wrap_g_socket_condition_timed_wait (GSocket *socket,
+                                      GIOCondition condition,
+                                      gint64 timeout,
+                                      GCancellable *cancellable,
+                                      GError **error)
 {
-    assert_non_null (fds);
-    if (fds->fd != TEST_FD) {
-        return __real_poll (fds, nfds, timeout);
-    } else {
-        fds->revents = mock_type (short);
-        errno = mock_type (int);
-        return mock_type (int);
+    gboolean ret = mock_type (gboolean);
+
+    g_debug ("%s", __func__);
+    if (socket != TEST_SOCKET) {
+        g_debug ("%s: not TEST_SOCKET, calling real func", __func__);
+        return __real_g_socket_condition_timed_wait (socket,
+                                                     condition,
+                                                     timeout,
+                                                     cancellable,
+                                                     error);
     }
+
+    if (!ret) {
+        g_debug ("%s: simulating error with new GError", __func__);
+        *error = g_error_new (G_IO_ERROR,
+                              mock_type (gint),
+                              __func__);
+    }
+
+    return ret;
 }
 /*
  * The mock functions for the g_socket_* stuff are required to test the
