@@ -3,7 +3,7 @@
 set -exo pipefail
 
 pushd "$1"
-TSS_VERSION=`git ls-remote --refs --tags https://github.com/tpm2-software/tpm2-tss.git | cut --delimiter='/' --fields=3 | tail --lines=1`
+TSS_VERSION="4.2.0"
 
 if [ -z "$TPM2TSS_BRANCH" ]; then
     echo "TPM2TSS_BRANCH is unset, please specify TPM2TSS_BRANCH"
