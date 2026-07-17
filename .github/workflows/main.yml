@@ -7,7 +7,7 @@ jobs:
     if: "!contains(github.ref, 'coverity_scan')"
     strategy:
       matrix:
-        DOCKER_IMAGE: [ "ubuntu-18.04", "ubuntu-20.04", "fedora-32", "opensuse-leap" ]
+        DOCKER_IMAGE: [ "ubuntu-22.04", "ubuntu-24.04", "fedora-32", "opensuse-leap" ]
         TPM2TSS_BRANCH: ["master"]
         CC: ["gcc", "clang"]
     steps:
@@ -67,7 +67,7 @@ jobs:
         with:
           PROJECT_NAME: ${{ github.event.repository.name }}
           ENABLE_COVERAGE: true
-          DOCKER_IMAGE: ubuntu-18.04
+          DOCKER_IMAGE: ubuntu-24.04
           TPM2TSS_BRANCH: master
           MAKE_TARGET: check
           CC: gcc
@@ -90,7 +90,7 @@ jobs:
           TPM2TOOLS_BRANCH: "4.0"
           REPO_BRANCH: ${{ github.ref }}
           REPO_NAME: ${{ github.repository }}
-          DOCKER_IMAGE: ubuntu-18.04
+          DOCKER_IMAGE: ubuntu-24.04
           CC: gcc
           COVERITY_SCAN_TOKEN: ${{ secrets.COVERITY_SCAN_TOKEN }}
           COVERITY_SUBMISSION_EMAIL: william.c.roberts@intel.com
