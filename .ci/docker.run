@@ -39,7 +39,17 @@ fi
 export CFLAGS
 
 $SCANBUILD ../configure --enable-debug $CONFIG_OPTS $CONFIG_EXTRA
-$SCANBUILD make -j$(nproc) $MAKE_TARGET
+if [[ "$SCANBUILD" != scan-build* ]]; then
+  $SCANBUILD make -j$(nproc) $MAKE_TARGET
+else
+  $SCANBUILD make -j$(nproc) $MAKE_TARGET 2>&1 | tee /tmp/build.log || true
+  FINDINGS=$(grep -E 'warning:.*\[[a-zA-Z0-9_.]+\]' /tmp/build.log \
+    | grep -v 'tabrmd-generated.c.*\[deadcode.DeadStores\]' || true)
+  if [[ -n "$FINDINGS" ]]; then
+    echo "$FINDINGS"
+    exit 1
+  fi
+fi
 
 if [[ "$ENABLE_COVERAGE" == "true" ]]; then
     bash <(curl -s https://codecov.io/bash)
