@@ -1,0 +1,47 @@
+# SPDX-FileCopyrightText: 2026 Juergen Repp
+# SPDX-FileCopyrightText: 2026 Moritz Buhl
+# SPDX-License-Identifier: BSD-2-Clause
+
+name: FreeBSD Build Status
+on: [push, pull_request]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  freebsd-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Test in FreeBSD
+        uses: vmactions/freebsd-vm@v1
+        with:
+          prepare: |
+            set -eux
+            export ASSUME_ALWAYS_YES=yes
+            pkg bootstrap -f
+            pkg update -f
+            pkg install -y bash gmake coreutils libtool pkgconf autoconf \
+              autoconf-archive openssl automake glib expat dbus dbus-glib \
+              cmocka wget git gettext-runtime swtpm tpm2-tss
+            sync
+          run: |
+            set -eux
+            cd /home/runner/work/tpm2-abrmd/tpm2-abrmd
+            export PATH="/usr/local/bin:/usr/local/sbin:$PATH"
+            export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/usr/local/libdata/pkgconfig"
+            export CFLAGS="-I/usr/local/include -I/usr/local/openssl/include"
+            export CPPFLAGS="$CFLAGS"
+            export LDFLAGS="-L/usr/local/lib"
+            export LD_LIBRARY_PATH="/usr/local/lib"
+            git config --global --add safe.directory '*'
+            ./bootstrap
+            ./configure --enable-unit=yes --enable-integration=yes --disable-dependency-tracking
+            gmake -j"$(sysctl -n hw.ncpu)" V=1 check || {
+              find . -name 'test-suite.log' -exec cat {} \;
+              exit 1
+            }

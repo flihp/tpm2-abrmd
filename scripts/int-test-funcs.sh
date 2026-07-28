@@ -67,10 +67,15 @@ simulator_start ()
 
     cd ${sim_tmp_dir}
     case "$sim_bin" in
-        *swtpm) daemon_start "$sim_bin" "socket --tpm2 --server port=$sim_port \
+        *swtpm)
+            local sim_seccomp_opts=""
+            if "$sim_bin" socket --help 2>&1 | grep -q -- '--seccomp'; then
+                sim_seccomp_opts="--seccomp action=none"
+            fi
+            daemon_start "$sim_bin" "socket --tpm2 --server port=$sim_port \
                              --ctrl type=tcp,port=$((sim_port + 1)) \
                              --flags not-need-init --tpmstate dir=$PWD \
-                             --seccomp action=none" \
+                             ${sim_seccomp_opts}" \
                              "$sim_log_file" "$sim_pid_file";;
         *tpm_server) daemon_start "$sim_bin" "-port $sim_port" \
                                   "$sim_log_file" "$sim_pid_file";;
