@@ -1,0 +1,15 @@
+name: dco-check
+
+on:
+  pull_request:
+
+jobs:
+  dco-check:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: dco check
+        uses: cpanato/dco-check-action@main
